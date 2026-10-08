@@ -23,6 +23,7 @@ import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Label } from "@/components/ui/label";
 import { DailyItinerary } from "@/components/daily-itinerary";
 import type { WalkingMode } from "@/lib/itinerary-walking";
+import type { AIItinerary } from "@/lib/ai-itinerary";
 
 type Screen = "lobby" | "quiz" | "profile" | "group" | "itinerary";
 type Place = {
@@ -127,6 +128,23 @@ export default function Home() {
   const [placeChoices, setPlaceChoices] = useState<Record<string, "must" | "interested" | "skip">>({ sensoji: "interested", teamlab: "must", meiji: "interested", museum: "skip", shibuya: "must", tsukiji: "interested" });
   const [conflictChoice, setConflictChoice] = useState("optional");
   const [walkingMode, setWalkingMode] = useState<WalkingMode>("standard");
+  const [generatedItinerary, setGeneratedItinerary] = useState<AIItinerary>();
+  const [generating, setGenerating] = useState(false);
+  const [generationError, setGenerationError] = useState("");
+
+  async function generateItinerary() {
+    setGenerating(true); setGenerationError("");
+    try {
+      const response = await fetch("/api/itinerary", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ answers, mustVisits: places.filter(place => placeChoices[place.id] === "must").map(place => place.name), conflictChoice }),
+      });
+      const data = await response.json() as { itinerary?: AIItinerary; message?: string };
+      if (!response.ok || !data.itinerary) throw new Error(data.message ?? "Could not generate this itinerary.");
+      setGeneratedItinerary(data.itinerary); setWalkingMode(answers.walking === "light" ? "reduced" : "standard"); setScreen("itinerary");
+    } catch (error) { setGenerationError(error instanceof Error ? error.message : "Generation failed. Try again."); }
+    finally { setGenerating(false); }
+  }
 
   async function refreshPlaces() {
     setRefreshing(true);
@@ -253,7 +271,11 @@ export default function Home() {
             <Card className="border-[#dce4e7] bg-white p-6"><div className="flex items-center justify-between"><h2 className="text-xl font-semibold">Everyone gets a moment</h2><Badge className="bg-[#e3f3ed] text-[#23664f]">4/4 covered</Badge></div><div className="mt-5 space-y-4">{[["Emma", mustVisits[0]?.name ?? "teamLab Borderless", "Art & immersive experiences"],["Alex", "Sensō-ji", "History & traditional Tokyo"],["Maya", "Shibuya Sky", "Shopping & city views"],["Jordan", "Tokyo National Museum", "Museums & low-cost culture"]].map(([name, place, note], index) => <div key={name} className="flex gap-3"><span className={`mt-0.5 grid h-9 w-9 shrink-0 place-items-center rounded-full text-xs font-semibold text-white ${travelers[index].color}`}>{travelers[index].initials}</span><div><p className="font-medium">{place}</p><p className="text-sm text-muted-foreground">{name} · {note}</p></div></div>)}</div></Card>
             <Card className="border-[#f0c7bd] bg-[#fff8f5] p-6"><div className="flex items-start gap-3"><span className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-[#f4d7cf] text-[#b64735]"><Utensils className="h-5 w-5" /></span><div><p className="text-sm font-semibold text-[#b64735]">1 DECISION NEEDED</p><h2 className="mt-1 text-xl font-semibold">Special dinner vs. daily budget</h2><p className="mt-2 text-sm leading-6 text-muted-foreground">Alex wants a premium sushi dinner. Jordan’s $80 daily cap makes it difficult as a required group activity.</p></div></div><RadioGroup value={conflictChoice} onValueChange={setConflictChoice} className="mt-5 gap-3">{[["alternative", "Choose a lower-cost alternative", "Everyone stays together · budget protected"],["optional", "Make the dinner optional", "Alex can splurge · others get a nearby casual option"],["exception", "Allow one budget exception", "Everyone joins · Jordan’s cap is relaxed for one evening"]].map(([value, title, description]) => <Label key={value} htmlFor={`conflict-${value}`} className={`flex cursor-pointer items-start gap-3 rounded-2xl border p-4 ${conflictChoice === value ? "border-[#ef6a53] bg-white" : "border-[#eadbd6] bg-white/55"}`}><RadioGroupItem id={`conflict-${value}`} value={value} className="mt-0.5 text-[#e75f48]" /><span><span className="block font-semibold">{title}</span><span className="mt-1 block text-sm font-normal text-muted-foreground">{description}</span></span></Label>)}</RadioGroup></Card>
           </div>
-          <div className="mt-7 flex flex-col items-center justify-between gap-4 rounded-3xl bg-[#17384d] p-5 text-white sm:flex-row sm:p-6"><div><p className="font-semibold">All hard constraints are covered or surfaced.</p><p className="mt-1 text-sm text-white/65">Your choice will shape Day 4 before the final plan is generated.</p></div><Button size="lg" className="h-12 w-full rounded-full bg-[#ef6a53] px-7 hover:bg-[#dc5944] sm:w-auto" onClick={() => setScreen("itinerary")}><Sparkles className="mr-2 h-4 w-4" /> Generate itinerary</Button></div>
+          <div className="mt-7 flex flex-col items-center justify-between gap-4 rounded-3xl bg-[#17384d] p-5 text-white sm:flex-row sm:p-6"><div><p className="font-semibold">Ready to generate your group draft.</p><p className="mt-1 text-sm text-white/65">Your choice will shape Day 4 before the final plan is generated.</p></div><Button size="lg" className="h-12 w-full rounded-full bg-[#ef6a53] px-7 hover:bg-[#dc5944] sm:w-auto" disabled={generating} onClick={generateItinerary}><Sparkles className="mr-2 h-4 w-4" /> {generating ? "Generating your trip…" : "Generate itinerary"}</Button></div>
+          <p className="mt-3 text-sm leading-6 text-muted-foreground">AI generation sends your preference choices to DeepSeek. Companion profiles are simulated. <a href="/data-use" target="_blank" rel="noopener noreferrer" className="underline">Data use & terms</a></p>
+          {generating && <p role="status" className="mt-3 text-sm text-[#315b7d]">Building five days with lunch, dinner, and low-walking alternatives. This may take up to a minute.</p>}
+          {generationError && <p role="alert" className="mt-3 rounded-xl bg-[#fff0ec] p-4 text-sm text-[#b64735]">{generationError}</p>}
+          <Button disabled={generating} variant="ghost" className="mt-3 rounded-full" onClick={() => { setGeneratedItinerary(undefined); setWalkingMode("standard"); setScreen("itinerary"); }}>Preview sample itinerary</Button>
         </section>
       )}
 
@@ -263,9 +285,9 @@ export default function Home() {
           <div className="mt-8 grid gap-5 lg:grid-cols-[1fr_280px]">
             <div className="space-y-4">
               {walkingMode === "reduced" && <div role="status" className="rounded-2xl border border-[#b8d6cb] bg-[#eef7f2] p-4"><p className="flex items-center gap-2 font-semibold text-[#2f7a61]"><Footprints className="h-5 w-5" />Less-walking plan applied</p><p className="mt-2 text-sm leading-6 text-muted-foreground">All five days now include shorter browsing, more seated breaks, and ride-first transfers. Lunch, dinner, and your dinner decision stay in place. Actual steps depend on routes and venue layouts; taxis may add cost.</p></div>}
-              <DailyItinerary conflictChoice={conflictChoice} budget={answers.budget} walkingMode={walkingMode} />
+              <DailyItinerary conflictChoice={conflictChoice} budget={answers.budget} walkingMode={walkingMode} generated={generatedItinerary} />
             </div>
-            <aside className="space-y-4"><Card className="border-[#dce4e7] bg-[#f4f7f7] p-5"><CloudSun className="h-6 w-6 text-[#315b7d]" /><h2 className="mt-4 font-semibold">Before you book</h2><p className="mt-2 text-sm leading-6 text-muted-foreground">Opening hours, prices, and availability can change. Verify current details before purchasing tickets or making reservations.</p></Card><Card className="border-[#dce4e7] bg-white p-5"><p className="text-sm font-semibold">Preference coverage</p><div className="mt-4 flex items-end gap-2"><span className="text-4xl font-semibold tracking-tight">92%</span><span className="pb-1 text-sm text-muted-foreground">high-priority picks</span></div><Progress value={92} className="mt-4 h-2 [&>div]:bg-[#3e8068]" /><p className="mt-3 text-sm text-muted-foreground">Every traveler has at least one Top 3 activity.</p></Card><Button className="h-12 w-full rounded-full bg-[#ef6a53] text-white hover:bg-[#dc5944]">Accept this draft</Button><Button variant="outline" className="h-12 w-full rounded-full" aria-pressed={walkingMode === "reduced"} onClick={() => setWalkingMode((current) => current === "standard" ? "reduced" : "standard")}>{walkingMode === "reduced" ? "Restore original pace" : "Reduce walking"}</Button></aside>
+            <aside className="space-y-4"><Card className="border-[#dce4e7] bg-[#f4f7f7] p-5"><CloudSun className="h-6 w-6 text-[#315b7d]" /><h2 className="mt-4 font-semibold">Before you book</h2><p className="mt-2 text-sm leading-6 text-muted-foreground">Opening hours, prices, and availability can change. Verify current details before purchasing tickets or making reservations.</p></Card><Card className="border-[#dce4e7] bg-white p-5"><p className="text-sm font-semibold">{generatedItinerary ? "Generated with DeepSeek" : "Sample itinerary"}</p><p className="mt-3 text-sm leading-6 text-muted-foreground">Review each traveler’s priorities, daily costs, and unresolved conflicts before accepting. Coverage has not been independently scored.</p></Card><Button className="h-12 w-full rounded-full bg-[#ef6a53] text-white hover:bg-[#dc5944]">Accept this draft</Button><Button variant="outline" className="h-12 w-full rounded-full" aria-pressed={walkingMode === "reduced"} onClick={() => setWalkingMode((current) => current === "standard" ? "reduced" : "standard")}>{walkingMode === "reduced" ? "Restore original pace" : "Reduce walking"}</Button></aside>
           </div>
         </section>
       )}

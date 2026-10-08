@@ -17,7 +17,7 @@ npm run dev
 - `app/globals.css`：页面样式与移动端布局。
 - `app/api/places/route.ts`：景点数据接口。
 
-当前版本是演示原型：同行成员和行程使用示例数据，问卷答案保存在当前页面状态中；尚未实现跨设备同步、多人回答存储或 LLM 行程生成。景点接口配置 `GOOGLE_PLACES_API_KEY` 时请求 Google Places，否则返回示例数据。
+当前版本支持 DeepSeek 行程生成，问卷答案和行程保存在当前页面状态中。同行成员仍是模拟画像，尚未实现跨设备同步或多人回答存储。景点接口配置 `GOOGLE_PLACES_API_KEY` 时请求 Google Places，否则返回示例数据。
 
 ## 提交修改
 
@@ -43,5 +43,15 @@ npm run build
 纯逻辑测试：`node --experimental-strip-types --test tests/restaurant-search.test.mjs`。
 
 ## 发布说明
+
+## DeepSeek 行程生成
+
+服务端 `/api/itinerary` 使用 `DEEPSEEK_API_KEY` 秘密变量，默认模型 `deepseek-flash`；可通过非秘密变量 `DEEPSEEK_MODEL` 修改。模型参数参考 [DeepSeek 官方文档](https://api-docs.deepseek.com/api/create-chat-completion/)。服务端启用 JSON 输出并验证五天、每天午晚餐、时间不重叠和少步行替代项；第 4 天晚饭由服务端强制保留组织者选择。AI 草案不是实时验证过的旅行数据。
+
+失败时显示真实错误状态并允许手动预览示例，不会把示例伪装成 AI 输出。每次请求最多 6,000 输出 tokens、55 秒超时，并做每个服务实例内的 IP 60 秒冷却。这不是全局限流；大规模公开演示前需另外设置服务商支出限额或持久化配额。问卷偏好、景点名称和冲突决策会发送给 DeepSeek；姓名、邮箱不在请求数据中。
+
+运行所有逻辑测试：`node --experimental-strip-types --test tests/*.test.mjs`。
+
+## 更新线上网站
 
 GitHub 用来共同编辑源代码。合并代码后，现有 Sites 网站需要另外发布；仅推送 GitHub 不会自动更新线上网站。`.openai/hosting.json` 保存现有网站的关联信息，请保留它。

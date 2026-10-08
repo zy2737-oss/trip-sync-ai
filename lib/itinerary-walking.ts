@@ -1,5 +1,5 @@
 export type WalkingMode = "standard" | "reduced";
-type Stop = { time: string; title: string; detail: string; meal?: "Lunch" | "Dinner" };
+type Stop = { time: string; title: string; detail: string; meal?: "Lunch" | "Dinner"; lowWalkingTitle?: string; lowWalkingDetail?: string };
 
 const adjustments: Record<string, Record<string, Partial<Stop>>> = {
   "01": {
@@ -32,5 +32,7 @@ const adjustments: Record<string, Record<string, Partial<Stop>>> = {
 
 export function adjustWalking<T extends Stop>(day: string, stops: T[], mode: WalkingMode): T[] {
   if (mode === "standard") return stops;
-  return stops.map(stop => stop.meal ? stop : { ...stop, ...adjustments[day]?.[stop.time] });
+  return stops.map(stop => stop.meal ? stop : stop.lowWalkingTitle && stop.lowWalkingDetail
+    ? { ...stop, title: stop.lowWalkingTitle, detail: stop.lowWalkingDetail }
+    : { ...stop, ...adjustments[day]?.[stop.time] });
 }

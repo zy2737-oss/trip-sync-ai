@@ -3,11 +3,12 @@ import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { RestaurantOptions } from "@/components/restaurant-options";
 import { adjustWalking, type WalkingMode } from "@/lib/itinerary-walking";
+import type { AIItinerary } from "@/lib/ai-itinerary";
 
 type Stop = { time: string; title: string; detail: string; meal?: "Lunch" | "Dinner"; cost?: string };
 type Day = { day: string; title: string; area: string; people: string; note: string; stops: Stop[] };
 
-export function DailyItinerary({ conflictChoice, budget, walkingMode }: { conflictChoice: string; budget: string; walkingMode: WalkingMode }) {
+export function DailyItinerary({ conflictChoice, budget, walkingMode, generated }: { conflictChoice: string; budget: string; walkingMode: WalkingMode; generated?: AIItinerary }) {
   const sushiDinner: Stop = conflictChoice === "alternative"
     ? { time: "18:30–20:00", meal: "Dinner", title: "Casual sushi together", detail: "Choose a conveyor-belt or set-menu sushi spot around Ginza or Yurakucho. Agree on a per-person limit before ordering.", cost: "¥2,000–3,500 / person" }
     : conflictChoice === "exception"
@@ -55,8 +56,9 @@ export function DailyItinerary({ conflictChoice, budget, walkingMode }: { confli
   ];
 
   return <div className="space-y-4">
-    <p className="text-sm leading-6 text-muted-foreground">Sample schedule · Times are local to Tokyo. Meal budgets are illustrative estimates, not live quotes. Choose restaurant candidates below; selecting a restaurant does not make a reservation.</p>
-    {days.map((day) => <Card key={day.day} className="overflow-hidden border-[#dce4e7] bg-white shadow-sm">
+    <p className="text-sm leading-6 text-muted-foreground">{generated ? "AI-generated draft" : "Sample schedule"} · Times are local to Tokyo. Meal budgets are illustrative estimates, not live quotes. Choose restaurant candidates below; selecting a restaurant does not make a reservation.</p>
+    {generated && <Card className="border-[#dce4e7] bg-white p-5"><p className="font-semibold">How this plan fits</p><p className="mt-2 text-sm leading-6 text-muted-foreground">{generated.summary}</p><h2 className="mt-4 font-semibold">Review before confirming</h2><ul className="mt-2 list-disc space-y-2 pl-5 text-sm leading-6 text-muted-foreground">{generated.reviewNotes.map((note, i) => <li key={i}>{note}</li>)}</ul></Card>}
+    {(generated?.days ?? days).map((day) => <Card key={day.day} className="overflow-hidden border-[#dce4e7] bg-white shadow-sm">
       <div className="grid sm:grid-cols-[88px_1fr]">
         <div className="flex items-center justify-between bg-[#17384d] p-5 text-white sm:flex-col sm:items-start sm:justify-start sm:gap-2"><span className="text-sm font-semibold tracking-[0.16em] text-white/70">DAY</span><span className="text-4xl font-semibold">{day.day}</span></div>
         <div className="min-w-0 p-5 sm:p-6">

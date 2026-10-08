@@ -21,3 +21,11 @@ test("unrecognized blocks remain unchanged and repeated application is stable", 
   const first = adjustWalking("02", [{ time: "11:00–12:00", title: "Shopping", detail: "Walk" }], "reduced");
   assert.deepEqual(adjustWalking("02", first, "reduced"), first);
 });
+
+test("AI-specific low-walking alternatives override fixed template blocks", () => {
+  const stops = [{ time: "10:30–11:30", title: "Generated visit", detail: "Original", lowWalkingTitle: "Generated seated break", lowWalkingDetail: "Rest nearby" }];
+  const result = adjustWalking("01", stops, "reduced");
+  assert.equal(result[0].title, "Generated seated break");
+  assert.equal(result[0].detail, "Rest nearby");
+  assert.equal(adjustWalking("01", stops, "standard")[0].title, "Generated visit");
+});
