@@ -4,6 +4,7 @@ import { Card } from "@/components/ui/card";
 import { RestaurantOptions } from "@/components/restaurant-options";
 import { adjustWalking, type WalkingMode } from "@/lib/itinerary-walking";
 import type { AIItinerary } from "@/lib/ai-itinerary";
+import { DailyRouteMap } from "@/components/daily-route-map";
 
 type Stop = { time: string; title: string; detail: string; meal?: "Lunch" | "Dinner"; cost?: string };
 type Day = { day: string; title: string; area: string; people: string; note: string; stops: Stop[] };
@@ -63,6 +64,7 @@ export function DailyItinerary({ conflictChoice, budget, walkingMode, generated 
         <div className="flex items-center justify-between bg-[#17384d] p-5 text-white sm:flex-col sm:items-start sm:justify-start sm:gap-2"><span className="text-sm font-semibold tracking-[0.16em] text-white/70">DAY</span><span className="text-4xl font-semibold">{day.day}</span></div>
         <div className="min-w-0 p-5 sm:p-6">
           <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-start"><div><h2 className="text-xl font-semibold">{day.title}</h2><p className="mt-1 flex items-center gap-1 text-sm text-muted-foreground"><MapPin className="h-3.5 w-3.5" />{day.area}</p></div><Badge variant="outline" className="w-fit whitespace-normal border-[#c9d7db]">{walkingMode === "reduced" ? "Less walking · More seated breaks" : day.note}</Badge></div>
+          <DailyRouteMap day={day.day} stops={adjustWalking(day.day, day.stops, walkingMode)} />
           <ol className="mt-5 space-y-3" aria-label={`Day ${day.day} schedule`}>
             {adjustWalking(day.day, day.stops, walkingMode).map((stop) => <li key={`${stop.time}-${stop.title}`} className={`rounded-2xl border p-4 ${stop.meal ? "border-[#f2c6bb] bg-[#fff5f1]" : "border-transparent bg-[#f3f6f6]"}`}>
               <div className="flex flex-wrap items-center justify-between gap-2"><span className="text-sm font-semibold tabular-nums text-[#315b7d]">{stop.time}</span>{stop.meal && <span className="flex items-center gap-1.5 text-sm font-semibold text-[#b74d38]"><Utensils className="h-4 w-4" />{stop.meal}</span>}</div>
