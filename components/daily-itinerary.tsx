@@ -1,11 +1,12 @@
 import { Heart, MapPin, Utensils } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
+import { RestaurantOptions } from "@/components/restaurant-options";
 
 type Stop = { time: string; title: string; detail: string; meal?: "Lunch" | "Dinner"; cost?: string };
 type Day = { day: string; title: string; area: string; people: string; note: string; stops: Stop[] };
 
-export function DailyItinerary({ conflictChoice }: { conflictChoice: string }) {
+export function DailyItinerary({ conflictChoice, budget }: { conflictChoice: string; budget: string }) {
   const sushiDinner: Stop = conflictChoice === "alternative"
     ? { time: "18:30–20:00", meal: "Dinner", title: "Casual sushi together", detail: "Choose a conveyor-belt or set-menu sushi spot around Ginza or Yurakucho. Agree on a per-person limit before ordering.", cost: "¥2,000–3,500 / person" }
     : conflictChoice === "exception"
@@ -53,7 +54,7 @@ export function DailyItinerary({ conflictChoice }: { conflictChoice: string }) {
   ];
 
   return <div className="space-y-4">
-    <p className="text-sm leading-6 text-muted-foreground">Sample schedule · Times are local to Tokyo. Meal budgets are illustrative estimates, not live quotes; restaurants and reservations are not yet selected.</p>
+    <p className="text-sm leading-6 text-muted-foreground">Sample schedule · Times are local to Tokyo. Meal budgets are illustrative estimates, not live quotes. Choose restaurant candidates below; selecting a restaurant does not make a reservation.</p>
     {days.map((day) => <Card key={day.day} className="overflow-hidden border-[#dce4e7] bg-white shadow-sm">
       <div className="grid sm:grid-cols-[88px_1fr]">
         <div className="flex items-center justify-between bg-[#17384d] p-5 text-white sm:flex-col sm:items-start sm:justify-start sm:gap-2"><span className="text-sm font-semibold tracking-[0.16em] text-white/70">DAY</span><span className="text-4xl font-semibold">{day.day}</span></div>
@@ -64,6 +65,10 @@ export function DailyItinerary({ conflictChoice }: { conflictChoice: string }) {
               <div className="flex flex-wrap items-center justify-between gap-2"><span className="text-sm font-semibold tabular-nums text-[#315b7d]">{stop.time}</span>{stop.meal && <span className="flex items-center gap-1.5 text-sm font-semibold text-[#b74d38]"><Utensils className="h-4 w-4" />{stop.meal}</span>}</div>
               <h3 className="mt-2 text-base font-semibold">{stop.title}</h3><p className="mt-1 text-sm leading-6 text-muted-foreground">{stop.detail}</p>
               {stop.cost && <p className="mt-2 text-sm font-medium text-[#17384d]">Estimated meal budget: {stop.cost}</p>}
+              {stop.meal && (day.day === "04" && stop.meal === "Dinner" ? <>
+                {conflictChoice !== "exception" && <RestaurantOptions key="casual" day={day.day} meal={stop.meal} budget="mid" area="Ginza" label="Casual sushi candidates" />}
+                {conflictChoice !== "alternative" && <RestaurantOptions key="premium" day={day.day} meal={stop.meal} budget="premium" area="Ginza" label="Premium sushi candidates" />}
+              </> : <RestaurantOptions day={day.day} meal={stop.meal} budget={budget} area={stop.title} />)}
             </li>)}
           </ol>
           <p className="mt-4 flex items-center gap-2 text-sm text-[#315b7d]"><Heart className="h-4 w-4 shrink-0" />Priority interests: {day.people}</p>
