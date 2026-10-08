@@ -22,6 +22,7 @@ import { Progress } from "@/components/ui/progress";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Label } from "@/components/ui/label";
 import { DailyItinerary } from "@/components/daily-itinerary";
+import type { WalkingMode } from "@/lib/itinerary-walking";
 
 type Screen = "lobby" | "quiz" | "profile" | "group" | "itinerary";
 type Place = {
@@ -125,6 +126,7 @@ export default function Home() {
   const [refreshing, setRefreshing] = useState(false);
   const [placeChoices, setPlaceChoices] = useState<Record<string, "must" | "interested" | "skip">>({ sensoji: "interested", teamlab: "must", meiji: "interested", museum: "skip", shibuya: "must", tsukiji: "interested" });
   const [conflictChoice, setConflictChoice] = useState("optional");
+  const [walkingMode, setWalkingMode] = useState<WalkingMode>("standard");
 
   async function refreshPlaces() {
     setRefreshing(true);
@@ -257,10 +259,13 @@ export default function Home() {
 
       {screen === "itinerary" && (
         <section className="mx-auto w-full max-w-6xl px-4 pb-20 pt-7 sm:px-7 sm:pt-10">
-          <div className="flex flex-col gap-5 sm:flex-row sm:items-end sm:justify-between"><div><div className="flex items-center gap-2 text-sm font-semibold text-[#2f7a61]"><span className="h-2 w-2 rounded-full bg-[#3f9d7b]" /> READY TO REVIEW</div><h1 className="mt-2 text-3xl font-semibold tracking-[-0.03em] sm:text-5xl">Five days, four travelers, no one left out.</h1><p className="mt-3 max-w-2xl text-base leading-7 text-muted-foreground">Built around each traveler’s must-have, the group’s 8,000-step cap, and your conflict choice.</p></div><Button variant="outline" className="rounded-full" onClick={() => setScreen("group")}><ArrowLeft className="mr-2 h-4 w-4" /> Review decisions</Button></div>
+          <div className="flex flex-col gap-5 sm:flex-row sm:items-end sm:justify-between"><div><div className="flex items-center gap-2 text-sm font-semibold text-[#2f7a61]"><span className="h-2 w-2 rounded-full bg-[#3f9d7b]" /> READY TO REVIEW</div><h1 className="mt-2 text-3xl font-semibold tracking-[-0.03em] sm:text-5xl">Five days, four travelers, no one left out.</h1><p className="mt-3 max-w-2xl text-base leading-7 text-muted-foreground">{walkingMode === "reduced" ? "A gentler version with shorter visits, seated breaks, and ride-first transfers." : "Built around each traveler’s priority interests and your dinner decision. Review the walking pace below."}</p></div><Button variant="outline" className="rounded-full" onClick={() => setScreen("group")}><ArrowLeft className="mr-2 h-4 w-4" /> Review decisions</Button></div>
           <div className="mt-8 grid gap-5 lg:grid-cols-[1fr_280px]">
-            <DailyItinerary conflictChoice={conflictChoice} budget={answers.budget} />
-            <aside className="space-y-4"><Card className="border-[#dce4e7] bg-[#f4f7f7] p-5"><CloudSun className="h-6 w-6 text-[#315b7d]" /><h2 className="mt-4 font-semibold">Before you book</h2><p className="mt-2 text-sm leading-6 text-muted-foreground">Opening hours, prices, and availability can change. Verify current details before purchasing tickets or making reservations.</p></Card><Card className="border-[#dce4e7] bg-white p-5"><p className="text-sm font-semibold">Preference coverage</p><div className="mt-4 flex items-end gap-2"><span className="text-4xl font-semibold tracking-tight">92%</span><span className="pb-1 text-sm text-muted-foreground">high-priority picks</span></div><Progress value={92} className="mt-4 h-2 [&>div]:bg-[#3e8068]" /><p className="mt-3 text-sm text-muted-foreground">Every traveler has at least one Top 3 activity.</p></Card><Button className="h-12 w-full rounded-full bg-[#ef6a53] text-white hover:bg-[#dc5944]">Accept this draft</Button><Button variant="outline" className="h-12 w-full rounded-full">Reduce walking</Button></aside>
+            <div className="space-y-4">
+              {walkingMode === "reduced" && <div role="status" className="rounded-2xl border border-[#b8d6cb] bg-[#eef7f2] p-4"><p className="flex items-center gap-2 font-semibold text-[#2f7a61]"><Footprints className="h-5 w-5" />Less-walking plan applied</p><p className="mt-2 text-sm leading-6 text-muted-foreground">All five days now include shorter browsing, more seated breaks, and ride-first transfers. Lunch, dinner, and your dinner decision stay in place. Actual steps depend on routes and venue layouts; taxis may add cost.</p></div>}
+              <DailyItinerary conflictChoice={conflictChoice} budget={answers.budget} walkingMode={walkingMode} />
+            </div>
+            <aside className="space-y-4"><Card className="border-[#dce4e7] bg-[#f4f7f7] p-5"><CloudSun className="h-6 w-6 text-[#315b7d]" /><h2 className="mt-4 font-semibold">Before you book</h2><p className="mt-2 text-sm leading-6 text-muted-foreground">Opening hours, prices, and availability can change. Verify current details before purchasing tickets or making reservations.</p></Card><Card className="border-[#dce4e7] bg-white p-5"><p className="text-sm font-semibold">Preference coverage</p><div className="mt-4 flex items-end gap-2"><span className="text-4xl font-semibold tracking-tight">92%</span><span className="pb-1 text-sm text-muted-foreground">high-priority picks</span></div><Progress value={92} className="mt-4 h-2 [&>div]:bg-[#3e8068]" /><p className="mt-3 text-sm text-muted-foreground">Every traveler has at least one Top 3 activity.</p></Card><Button className="h-12 w-full rounded-full bg-[#ef6a53] text-white hover:bg-[#dc5944]">Accept this draft</Button><Button variant="outline" className="h-12 w-full rounded-full" aria-pressed={walkingMode === "reduced"} onClick={() => setWalkingMode((current) => current === "standard" ? "reduced" : "standard")}>{walkingMode === "reduced" ? "Restore original pace" : "Reduce walking"}</Button></aside>
           </div>
         </section>
       )}
