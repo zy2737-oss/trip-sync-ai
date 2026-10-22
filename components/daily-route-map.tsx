@@ -4,8 +4,9 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { Map as LeafletMap, Marker } from "leaflet";
 import { Button } from "@/components/ui/button";
 import { buildDailyRoute, directionsUrl, type RouteStopInput } from "@/lib/daily-route";
+import { RouteCheckPanel, type EvidenceAccess } from "@/components/route-check-panel";
 
-export function DailyRouteMap({ day, stops }: { day: string; stops: RouteStopInput[] }) {
+export function DailyRouteMap({ day, stops, access }: { day: string; stops: RouteStopInput[]; access?:EvidenceAccess }) {
   const route = useMemo(() => buildDailyRoute(day, stops), [day, stops]);
   const element = useRef<HTMLDivElement>(null);
   const map = useRef<LeafletMap | null>(null);
@@ -70,7 +71,8 @@ export function DailyRouteMap({ day, stops }: { day: string; stops: RouteStopInp
   return <section className="mt-5 overflow-hidden rounded-2xl border border-[#c9d7db]" aria-label={`Day ${day} route map`}>
     <div className="flex flex-wrap items-center justify-between gap-3 bg-[#edf4f7] p-4"><h3 className="font-semibold">Daily route · Day {day}</h3><div className="flex flex-wrap gap-2"><Button size="sm" variant="outline" className="rounded-full bg-white" disabled={status !== "ready"} onClick={showAll}>Show all stops</Button><Button size="sm" variant="outline" className="rounded-full bg-white" disabled={status !== "ready"} aria-pressed={interactive} onClick={() => setInteractive(v => !v)}>{interactive ? "Lock map for scrolling" : "Enable map gestures"}</Button></div></div>
     <div className="relative"><div ref={element} className={`tripsync-route-map relative z-0 h-72 w-full bg-[#e5ecee] sm:h-80 ${interactive ? "touch-none" : "touch-pan-y"}`} aria-label="Map with numbered stops" />{status !== "ready" && <p role="status" className="absolute inset-0 grid place-items-center p-6 text-center text-sm text-muted-foreground">{status === "failed" ? "Map unavailable. Use the route list and navigation links below." : "Loading map…"}</p>}</div>
-    <div className="space-y-3 p-4"><p className="text-sm leading-6 text-muted-foreground">Dashed lines show visit order, not roads or transit routes. Meals and unconfirmed stops use approximate area pins; overlapping stops share a numbered pin.</p>{tileError && <p role="status" className="text-sm text-[#b74d38]">Some map tiles could not load. The stop list and navigation links still work.</p>}
+    <div className="space-y-3 p-4"><p className="text-sm leading-6 text-muted-foreground">Dashed lines show visit order, not roads or transit routes. Meals and unconfirmed stops use approximate area pins; overlapping stops share a numbered pin. Use the route check below for calculated distance and time estimates.</p>{tileError && <p role="status" className="text-sm text-[#b74d38]">Some map tiles could not load. The stop list and navigation links still work.</p>}
+      <RouteCheckPanel day={day} stops={stops} access={access} />
       <ol aria-label={`Day ${day} map stops`} className="space-y-3">{route.map((stop, i) => {
         const previous = route[i - 1];
         const walking = previous && directionsUrl(previous, stop, "walking");

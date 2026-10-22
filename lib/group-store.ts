@@ -4,7 +4,7 @@ import { generateAIItinerary, ItineraryProviderError } from "./ai-itinerary.ts";
 import { scoreTravelStyle } from "./travel-personality.ts";
 
 export class GroupError extends Error { status:number; constructor(status: number, message: string) { super(message); this.status=status; } }
-type GroupRow = { code: string; name: string; created_at: string; revision: number; itinerary: string | null; plan_revision: number | null; conflict_choice: string; accepted_at: string | null; generating_until: number };
+type GroupRow = { code: string; name: string; created_at: string; revision: number; itinerary: string | null; plan_revision: number | null; conflict_choice: string; accepted_at: string | null; generated_at: string | null; generating_until: number };
 type MemberRow = { id: string; group_code: string; name: string; role: "organizer" | "member"; answers: string | null; place_choices: string | null; style_answers: string | null; top_pick: string | null; share_style: number; completed: number; updated_at: string };
 const now = () => new Date().toISOString();
 const secret = () => Array.from(crypto.getRandomValues(new Uint8Array(32)), b => b.toString(16).padStart(2,"0")).join("");
@@ -47,7 +47,7 @@ export async function snapshot(db:D1Database,code:string,request:Request):Promis
   return {group:{code:group.code,name:group.name,createdAt:group.created_at,revision:group.revision},currentMemberId:me.id,
     members:members.map(m=>{const result=m.completed && m.share_style && m.style_answers ? scoreTravelStyle(JSON.parse(m.style_answers)) : null;return {id:m.id,name:m.name,role:m.role,completed:!!m.completed,...(result?{sharedStyle:result}:{})};}),responses,
     itinerary:group.itinerary ? JSON.parse(group.itinerary) : undefined, planRevision:group.plan_revision,
-    conflictChoice:decisionSchema.parse(group.conflict_choice),acceptedAt:group.accepted_at};
+    conflictChoice:decisionSchema.parse(group.conflict_choice),acceptedAt:group.accepted_at,generatedAt:group.generated_at??null};
 }
 export async function createGroup(db:D1Database,request:Request) {
   checkOrigin(request); const input=z.object({name:z.string().trim().min(1).max(80),nickname:nicknameSchema}).parse(await readBody(request));
@@ -98,7 +98,7 @@ export async function generateGroupPlan(db:D1Database,code:string,request:Reques
     const travelers=members.map((m,i)=>{const profile=profiles[i],travelStyle=scoreTravelStyle(profile.styleAnswers);return {label:`Traveler ${i+1}`,answers:profile.answers,mustVisits:Object.entries(profile.placeChoices).filter(([,v])=>v==="must").map(([id])=>placeNames[id]),...(profile.topPick?{topPick:placeNames[profile.topPick]}:{}),...(travelStyle?{travelStyle}:{})};});
     const mustVisits=[...new Set(travelers.flatMap(t=>t.mustVisits))];
     const plan=await generateAIItinerary({answers,mustVisits,conflictChoice:input.conflictChoice,travelers},apiKey,model,fetcher);
-    const saved=await db.prepare("UPDATE trip_groups SET itinerary = ?, plan_revision = ?, conflict_choice = ?, accepted_at = NULL WHERE code = ? AND revision = ? AND generating_until = ? RETURNING code").bind(JSON.stringify(plan),group.revision,input.conflictChoice,code,group.revision,lease).first();
+    const saved=await db.prepare("UPDATE trip_groups SET itinerary = ?, plan_revision = ?, conflict_choice = ?, generated_at = ?, accepted_at = NULL WHERE code = ? AND revision = ? AND generating_until = ? RETURNING code").bind(JSON.stringify(plan),group.revision,input.conflictChoice,now(),code,group.revision,lease).first();
     if(!saved) throw new GroupError(409,"A traveler updated their profile during generation. Refresh and generate from the latest answers.");
     return snapshot(db,code,request);
   } catch(error) {

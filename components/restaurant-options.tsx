@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import type { Restaurant } from "@/lib/restaurant-search";
+import { evidenceTime } from "@/components/route-check-panel";
 
 const priceLabels: Record<string, string> = { PRICE_LEVEL_FREE: "Free", PRICE_LEVEL_INEXPENSIVE: "Inexpensive", PRICE_LEVEL_MODERATE: "Moderate", PRICE_LEVEL_EXPENSIVE: "Expensive", PRICE_LEVEL_VERY_EXPENSIVE: "Very expensive" };
 
@@ -34,7 +35,7 @@ export function RestaurantOptions({ day, meal, budget, area, label }: { day: str
     <a href="/data-use" target="_blank" rel="noopener noreferrer" className="mt-2 inline-block text-sm text-muted-foreground underline underline-offset-4">Data use & terms</a>
     <p role="status" aria-live="polite" className="mt-2 text-sm leading-6 text-muted-foreground">{message}</p>
     {restaurants.length > 0 && <div className="mt-3 space-y-3 rounded-xl border border-[#dce4e7] bg-white p-3">
-      <div className="flex flex-wrap items-center justify-between gap-2"><span translate="no" className="whitespace-nowrap font-sans text-sm font-normal text-[#5e5e5e]">Google Maps</span><span className="text-sm text-muted-foreground">Checked {checkedAt ? new Date(checkedAt).toLocaleTimeString("en", { timeZone: "Asia/Tokyo", hour: "2-digit", minute: "2-digit" }) : "just now"} JST</span></div>
+      <div className="flex flex-wrap items-center justify-between gap-2"><span translate="no" className="whitespace-nowrap font-sans text-sm font-normal text-[#5e5e5e]">Google Maps</span><span className="text-sm text-muted-foreground">{checkedAt ? `Queried ${evidenceTime(checkedAt)}` : "Query date unavailable"}</span></div>
       {restaurants.map(restaurant => <div key={restaurant.id} className={`rounded-xl border p-3 ${selected === restaurant.id ? "border-[#315b7d] bg-[#edf4f7]" : "border-[#e2e9eb]"}`}>
         <h4 className="text-base font-semibold">{restaurant.name}</h4><p className="mt-1 text-sm leading-6 text-muted-foreground">{restaurant.address}</p><p className="mt-1 text-sm">Price band: {priceLabels[restaurant.priceLevel ?? ""] ?? "Not supplied"}</p>
         <details className="mt-2 text-sm"><summary className="cursor-pointer">Usual opening hours</summary><ul className="mt-2 space-y-1 text-muted-foreground">{restaurant.hours.length ? restaurant.hours.map(hour => <li key={hour}>{hour}</li>) : <li>Hours not supplied. Check directly with the restaurant.</li>}</ul></details>

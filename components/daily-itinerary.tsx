@@ -5,11 +5,13 @@ import { RestaurantOptions } from "@/components/restaurant-options";
 import { adjustWalking, type WalkingMode } from "@/lib/itinerary-walking";
 import type { AIItinerary } from "@/lib/ai-itinerary";
 import { DailyRouteMap } from "@/components/daily-route-map";
+import { StopFactSources } from "@/components/stop-fact-sources";
+import { evidenceTime, type EvidenceAccess } from "@/components/route-check-panel";
 
-type Stop = { time: string; title: string; detail: string; meal?: "Lunch" | "Dinner"; cost?: string };
+type Stop = { time: string; title: string; detail: string; meal?: "Lunch" | "Dinner"; cost?: string; locationId?: import("@/lib/daily-route").LocationId };
 type Day = { day: string; title: string; area: string; people: string; note: string; stops: Stop[] };
 
-export function DailyItinerary({ conflictChoice, budget, walkingMode, generated }: { conflictChoice: string; budget: string; walkingMode: WalkingMode; generated?: AIItinerary }) {
+export function DailyItinerary({ conflictChoice, budget, walkingMode, generated, generatedAt, access }: { conflictChoice: string; budget: string; walkingMode: WalkingMode; generated?: AIItinerary; generatedAt?:string|null; access?:EvidenceAccess }) {
   const sushiDinner: Stop = conflictChoice === "alternative"
     ? { time: "18:30–20:00", meal: "Dinner", title: "Casual sushi together", detail: "Choose a conveyor-belt or set-menu sushi spot around Ginza or Yurakucho. Agree on a per-person limit before ordering.", cost: "¥2,000–3,500 / person" }
     : conflictChoice === "exception"
@@ -58,18 +60,21 @@ export function DailyItinerary({ conflictChoice, budget, walkingMode, generated 
 
   return <div className="space-y-4">
     <p className="text-sm leading-6 text-muted-foreground">{generated ? "AI-generated draft" : "Sample schedule"} · Times are local to Tokyo. Meal budgets are illustrative estimates, not live quotes. Choose restaurant candidates below; selecting a restaurant does not make a reservation.</p>
+    <div className="rounded-2xl border border-[#c9d7db] bg-[#edf4f7] p-4 text-sm leading-6"><p className="font-semibold">What is sourced, and what is still a suggestion?</p><p className="mt-2 text-muted-foreground">{generated ? `Plan source: DeepSeek. ${generatedAt ? `Generated ${evidenceTime(generatedAt)}.` : "Generation time was not recorded for this older draft."}` : "Plan source: team-authored sample. It is not a live travel-data query."} Times and meal budgets remain planning estimates. Official-source fields and route estimates are fetched only when you press their check buttons; each result shows its original query date.</p><p className="mt-2 text-xs text-muted-foreground">No travel dates or confirmed restaurant addresses are recorded. Opening on your exact day, ticket availability, full-day costs and daily walking-limit compliance are not verified.</p></div>
     {generated && <Card className="border-[#dce4e7] bg-white p-5"><p className="font-semibold">How this plan fits</p><p className="mt-2 text-sm leading-6 text-muted-foreground">{generated.summary}</p><h2 className="mt-4 font-semibold">Review before confirming</h2><ul className="mt-2 list-disc space-y-2 pl-5 text-sm leading-6 text-muted-foreground">{generated.reviewNotes.map((note, i) => <li key={i}>{note}</li>)}</ul></Card>}
     {(generated?.days ?? days).map((day) => <Card key={day.day} className="overflow-hidden border-[#dce4e7] bg-white shadow-sm">
       <div className="grid sm:grid-cols-[88px_1fr]">
         <div className="flex items-center justify-between bg-[#17384d] p-5 text-white sm:flex-col sm:items-start sm:justify-start sm:gap-2"><span className="text-sm font-semibold tracking-[0.16em] text-white/70">DAY</span><span className="text-4xl font-semibold">{day.day}</span></div>
         <div className="min-w-0 p-5 sm:p-6">
           <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-start"><div><h2 className="text-xl font-semibold">{day.title}</h2><p className="mt-1 flex items-center gap-1 text-sm text-muted-foreground"><MapPin className="h-3.5 w-3.5" />{day.area}</p></div><Badge variant="outline" className="w-fit whitespace-normal border-[#c9d7db]">{walkingMode === "reduced" ? "Less walking · More seated breaks" : day.note}</Badge></div>
-          <DailyRouteMap day={day.day} stops={adjustWalking(day.day, day.stops, walkingMode)} />
+          <DailyRouteMap day={day.day} stops={adjustWalking(day.day, day.stops, walkingMode)} access={access} />
           <ol className="mt-5 space-y-3" aria-label={`Day ${day.day} schedule`}>
             {adjustWalking(day.day, day.stops, walkingMode).map((stop) => <li key={`${stop.time}-${stop.title}`} className={`rounded-2xl border p-4 ${stop.meal ? "border-[#f2c6bb] bg-[#fff5f1]" : "border-transparent bg-[#f3f6f6]"}`}>
               <div className="flex flex-wrap items-center justify-between gap-2"><span className="text-sm font-semibold tabular-nums text-[#315b7d]">{stop.time}</span>{stop.meal && <span className="flex items-center gap-1.5 text-sm font-semibold text-[#b74d38]"><Utensils className="h-4 w-4" />{stop.meal}</span>}</div>
               <h3 className="mt-2 text-base font-semibold">{stop.title}</h3><p className="mt-1 text-sm leading-6 text-muted-foreground">{stop.detail}</p>
-              {stop.cost && <p className="mt-2 text-sm font-medium text-[#17384d]">Estimated meal budget: {stop.cost}</p>}
+              <p className="mt-2 text-xs text-muted-foreground">Time slot: {generated?"AI planning estimate":"sample planning estimate"} · not verified venue hours.</p>
+              {stop.cost && <p className="mt-2 text-sm font-medium text-[#17384d]">Illustrative meal estimate: {stop.cost} <span className="text-xs font-normal text-muted-foreground">· {generated?"AI suggestion":"team sample"}, not a menu quote</span></p>}
+              <StopFactSources title={stop.title} locationId={stop.locationId} meal={stop.meal} generated={!!generated} access={access} />
               {stop.meal && (day.day === "04" && stop.meal === "Dinner" ? <>
                 {conflictChoice !== "exception" && <RestaurantOptions key="casual" day={day.day} meal={stop.meal} budget="mid" area="Ginza" label="Casual sushi candidates" />}
                 {conflictChoice !== "alternative" && <RestaurantOptions key="premium" day={day.day} meal={stop.meal} budget="premium" area="Ginza" label="Premium sushi candidates" />}

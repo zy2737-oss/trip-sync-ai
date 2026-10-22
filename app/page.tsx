@@ -40,6 +40,7 @@ type Place = {
   priceLevel?: string;
   status?: string;
   source: "google_places" | "demo";
+  checkedAt?: string | null;
 };
 
 type PlaceChoice = "must" | "interested" | "skip";
@@ -117,12 +118,12 @@ const questions = [
 ];
 
 const fallbackPlaces: Place[] = [
-  { id: "sensoji", name: "Sensō-ji", area: "Asakusa", rating: 4.5, priceLevel: "Free", status: "Operational", source: "demo" },
-  { id: "teamlab", name: "teamLab Borderless", area: "Azabudai Hills", rating: 4.6, priceLevel: "$$", status: "Operational", source: "demo" },
-  { id: "meiji", name: "Meiji Jingu", area: "Harajuku", rating: 4.6, priceLevel: "Free", status: "Operational", source: "demo" },
-  { id: "museum", name: "Tokyo National Museum", area: "Ueno", rating: 4.5, priceLevel: "$", status: "Operational", source: "demo" },
-  { id: "shibuya", name: "Shibuya Sky", area: "Shibuya", rating: 4.6, priceLevel: "$$", status: "Operational", source: "demo" },
-  { id: "tsukiji", name: "Tsukiji Outer Market", area: "Tsukiji", rating: 4.2, priceLevel: "$", status: "Operational", source: "demo" },
+  { id: "sensoji", name: "Sensō-ji", area: "Asakusa", rating: 4.5, priceLevel: "Free", status: "Unverified", source: "demo" },
+  { id: "teamlab", name: "teamLab Borderless", area: "Azabudai Hills", rating: 4.6, priceLevel: "$$", status: "Unverified", source: "demo" },
+  { id: "meiji", name: "Meiji Jingu", area: "Harajuku", rating: 4.6, priceLevel: "Free", status: "Unverified", source: "demo" },
+  { id: "museum", name: "Tokyo National Museum", area: "Ueno", rating: 4.5, priceLevel: "$", status: "Unverified", source: "demo" },
+  { id: "shibuya", name: "Shibuya Sky", area: "Shibuya", rating: 4.6, priceLevel: "$$", status: "Unverified", source: "demo" },
+  { id: "tsukiji", name: "Tsukiji Outer Market", area: "Tsukiji", rating: 4.2, priceLevel: "$", status: "Unverified", source: "demo" },
 ];
 
 const answerLabels: Record<string, string> = {
@@ -361,7 +362,7 @@ export default function Home() {
               </Card>
             )}
             <Card className="border-[#dce4e7] bg-white p-5 sm:p-6"><p className="text-xs font-semibold uppercase tracking-[0.16em] text-[#d9513f]">What is your travel style?</p><p className="mt-2 text-sm leading-6 text-muted-foreground">Six lighthearted styles. Your budget and walking needs stay separate.</p><div className="mt-4 grid grid-cols-2 gap-3">{styleIds.map(id=><div key={id} className="flex items-center gap-2 text-xs font-medium"><span className="grid h-8 w-8 shrink-0 place-items-center rounded-xl" style={{background:travelStyles[id].softColor,color:travelStyles[id].color}}><StyleIcon id={id} className="h-4 w-4" /></span>{travelStyles[id].shortName}</div>)}</div></Card>
-            <Card className="border-[#dce4e7] bg-[#f5f8f8] p-5 sm:p-6"><div className="flex items-center justify-between gap-3"><div><div className="flex items-center gap-2 text-sm font-semibold text-[#315b7d]"><span className="h-2 w-2 rounded-full bg-[#3c8f72]" /> PLACE DATA</div><p className="mt-2 text-sm leading-6 text-muted-foreground">{placeSource === "google_places" ? "Live Google Places data connected" : "Demo dataset active · Google Places adapter ready"}</p></div><Button aria-label="Refresh place data" size="icon" variant="outline" className="rounded-full" onClick={refreshPlaces} disabled={refreshing}><RefreshCw className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`} /></Button></div></Card>
+            <Card className="border-[#dce4e7] bg-[#f5f8f8] p-5 sm:p-6"><div className="flex items-center justify-between gap-3"><div><div className="flex items-center gap-2 text-sm font-semibold text-[#315b7d]"><span className="h-2 w-2 rounded-full bg-[#3c8f72]" /> PLACE DATA</div><p className="mt-2 text-sm leading-6 text-muted-foreground">{placeSource === "google_places" ? "Matching cards refreshed from Google Places; other cards use demo references" : "Demo dataset active · Google Places adapter ready"}</p></div><Button aria-label="Refresh place data" size="icon" variant="outline" className="rounded-full" onClick={refreshPlaces} disabled={refreshing}><RefreshCw className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`} /></Button></div></Card>
             <p className="px-2 text-xs leading-5 text-muted-foreground">Tokyo photo by Christophe95, licensed CC BY-SA 4.0 via Wikimedia Commons.</p>
           </div>
         </section>
@@ -387,7 +388,7 @@ export default function Home() {
               <p className="text-sm font-semibold tracking-[0.16em] text-[#d9513f]">TOKYO PICKS</p><h1 className="mt-3 text-3xl font-semibold leading-tight tracking-[-0.03em] sm:text-5xl">What deserves a place in your Tokyo story?</h1><p className="mt-4 text-base leading-7 text-muted-foreground">Choose one #1 attraction, then up to two other must-visits. Open any card for photos and visit tips. Your first choice is a priority, not a guaranteed booking.</p>
               <div className="mt-8 grid gap-4 sm:grid-cols-2">
                 {places.map((place) => (
-                  <AttractionCard key={place.id} place={place} choice={placeChoices[place.id]} canSelectMust={mustVisits.length < 3 || placeChoices[place.id] === "must"} onChoice={(choice) => setChoice(place.id, choice)} isTopPick={topPick===place.id} onTopPick={()=>chooseTopPick(place.id)} />
+                  <AttractionCard key={place.id} place={place} choice={placeChoices[place.id]} canSelectMust={mustVisits.length < 3 || placeChoices[place.id] === "must"} onChoice={(choice) => setChoice(place.id, choice)} isTopPick={topPick===place.id} onTopPick={()=>chooseTopPick(place.id)} access={shared.session??undefined} />
                 ))}
               </div>
               <div className="mt-7 flex items-center justify-between gap-4"><p className="text-sm text-muted-foreground">{mustVisits.length}/3 must-visits · {topPick ? "#1 selected" : "Choose your #1 to continue"}</p><Button disabled={!topPick || !personality} size="lg" className="h-12 rounded-full bg-[#17384d] px-7 hover:bg-[#0f2c3f]" onClick={nextQuestion}>Create my profile</Button></div>
@@ -443,7 +444,7 @@ export default function Home() {
           <div className="mt-8 grid gap-5 lg:grid-cols-[1fr_280px]">
             <div className="space-y-4">
               {walkingMode === "reduced" && <div role="status" className="rounded-2xl border border-[#b8d6cb] bg-[#eef7f2] p-4"><p className="flex items-center gap-2 font-semibold text-[#2f7a61]"><Footprints className="h-5 w-5" />Less-walking plan applied</p><p className="mt-2 text-sm leading-6 text-muted-foreground">All five days now include shorter browsing, more seated breaks, and ride-first transfers. Lunch, dinner, and your dinner decision stay in place. Actual steps depend on routes and venue layouts; taxis may add cost.</p></div>}
-              <DailyItinerary conflictChoice={conflictChoice} budget={aggregatedAnswers.budget} walkingMode={walkingMode} generated={generatedItinerary} />
+              <DailyItinerary conflictChoice={conflictChoice} budget={aggregatedAnswers.budget} walkingMode={walkingMode} generated={generatedItinerary} generatedAt={shared.snapshot?.generatedAt} access={shared.session??undefined} />
             </div>
             <aside className="space-y-4"><Card className="border-[#dce4e7] bg-[#f4f7f7] p-5"><CloudSun className="h-6 w-6 text-[#315b7d]" /><h2 className="mt-4 font-semibold">Before you book</h2><p className="mt-2 text-sm leading-6 text-muted-foreground">Opening hours, prices, and availability can change. Verify current details before purchasing tickets or making reservations.</p></Card><Card className="border-[#dce4e7] bg-white p-5"><p className="text-sm font-semibold">{generatedItinerary ? "Generated with DeepSeek" : "Sample itinerary"}</p><p className="mt-3 text-sm leading-6 text-muted-foreground">Review each traveler’s priorities, daily costs, and unresolved conflicts before accepting. Coverage has not been independently scored.</p></Card>{isOrganizer && generatedItinerary && <Button disabled={shared.busy || planStale || !!shared.snapshot?.acceptedAt} onClick={()=>shared.update("accept",{expectedRevision:group?.revision})} className="h-12 w-full rounded-full bg-[#ef6a53] text-white hover:bg-[#dc5944]">{shared.snapshot?.acceptedAt?"Accepted":"Accept this draft"}</Button>}<Button variant="outline" className="h-12 w-full rounded-full" aria-pressed={walkingMode === "reduced"} onClick={() => setWalkingMode((current) => current === "standard" ? "reduced" : "standard")}>{walkingMode === "reduced" ? "Restore original pace" : "Reduce walking"}</Button></aside>
           </div>

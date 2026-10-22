@@ -6,6 +6,7 @@ export const tripGroups = sqliteTable("trip_groups", {
   itinerary: text("itinerary"), planRevision: integer("plan_revision"),
   conflictChoice: text("conflict_choice").notNull().default("alternative"),
   acceptedAt: text("accepted_at"), generatingUntil: integer("generating_until").notNull().default(0),
+  generatedAt: text("generated_at"),
 });
 export const tripMembers = sqliteTable("trip_members", {
   id: text("id").primaryKey(), groupCode: text("group_code").notNull().references(() => tripGroups.code, { onDelete: "cascade" }),
@@ -18,4 +19,11 @@ export const tripMembers = sqliteTable("trip_members", {
 }, (t) => [uniqueIndex("member_group_name").on(t.groupCode, t.nameKey), uniqueIndex("member_token").on(t.tokenHash)]);
 export const groupRateLimits = sqliteTable("group_rate_limits", {
   key: text("key").primaryKey(), hits: integer("hits").notNull(), expiresAt: integer("expires_at").notNull(),
+});
+// Public-location provider data only; never contains profiles or access credentials.
+export const evidenceCache = sqliteTable("evidence_cache", {
+  key: text("key").primaryKey(), payload: text("payload").notNull(), expiresAt: integer("expires_at").notNull(),
+});
+export const providerSlots = sqliteTable("provider_slots", {
+  key: text("key").primaryKey(), nextAllowedAt: integer("next_allowed_at").notNull(),
 });

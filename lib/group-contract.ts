@@ -31,6 +31,7 @@ export type GroupSnapshot = {
   members: GroupMember[]; currentMemberId: string;
   responses: Record<string, Profile & { updatedAt: string }>;
   itinerary?: AIItinerary; planRevision: number | null; conflictChoice: z.infer<typeof decisionSchema>; acceptedAt: string | null;
+  generatedAt: string | null;
 };
 
 function majority(values: string[], fallback: string) {

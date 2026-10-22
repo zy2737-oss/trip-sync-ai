@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 const base=new URL(process.argv[2]??"http://127.0.0.1:8787").origin;
 const generate=process.argv.includes("--generate");
 const withStyles=process.argv.includes("--styles");
+const withEvidence=process.argv.includes("--evidence");
 let owner;
 async function call(path,method="GET",session,body,expected=200,retry=0){
   const response=await fetch(base+path,{method,signal:AbortSignal.timeout(85000),headers:{Origin:base,...(body?{"Content-Type":"application/json"}:{}),...(session?{Authorization:`Bearer ${session.token}`}:{})},...(body?{body:JSON.stringify(body)}:{})});
@@ -36,11 +37,29 @@ try{
   }
   let summary=await call(path,"GET",owner);const mine=await call(path,"GET",friend);
   assert.equal(summary.members.length,2);assert.equal(Object.keys(summary.responses).length,2);assert.equal(Object.keys(mine.responses).length,1);
+  if(withEvidence){
+    const route={day:"01",mode:"walking",stops:[{time:"09:00–10:00",title:"Sensō-ji",detail:"Temple visit",locationId:"sensoji"},{time:"10:00–11:00",title:"Tokyo National Museum",detail:"Museum visit",locationId:"museum"}]};
+    await call(path+"/routes","POST",null,route,401);
+    const checked=await call(path+"/routes","POST",owner,route);
+    assert.equal(checked.checkedLegs,1,"Live routing lookup did not return a checked leg");
+    assert.ok(Date.parse(checked.queriedAt));assert.ok(checked.legs[0].distanceMeters>0);assert.ok(checked.legs[0].durationSeconds>0);
+    assert.equal(checked.legs[0].status,"too_short");
+    const cached=await call(path+"/routes","POST",friend,route);
+    assert.equal(cached.cached,true);assert.equal(cached.queriedAt,checked.queriedAt);
+    await call(path+"/facts","POST",null,{id:"meiji"},401);
+    const facts=await call(path+"/facts","POST",owner,{id:"meiji"});
+    assert.equal(facts.status,"retrieved","Official source could not be read completely");
+    assert.ok(facts.hours);assert.ok(facts.admission);assert.ok(Date.parse(facts.queriedAt));
+    const cachedFacts=await call(path+"/facts","POST",friend,{id:"meiji"});
+    assert.equal(cachedFacts.cached,true);assert.equal(cachedFacts.queriedAt,facts.queriedAt);
+    console.log(JSON.stringify({routing:"passed (live road/path distance, duration and conflict)",officialFacts:"passed (Meiji Jingu)",cacheDates:"passed",evidenceAuth:"passed"}));
+  }
   await call(path+"/accept","POST",friend,{expectedRevision:summary.group.revision},403);
   if(generate){
     summary=await call(path+"/itinerary","POST",owner,{expectedRevision:summary.group.revision,conflictChoice:"alternative"});
     assert.equal(summary.itinerary.days.length,5);
     const restored=await call(path,"GET",friend);assert.equal(restored.itinerary.days.length,5);
+    assert.ok(Date.parse(restored.generatedAt));
     await call(path+"/accept","POST",owner,{expectedRevision:summary.group.revision});
     await call(path+"/profile","PUT",friend,profile);
     await call(path+"/accept","POST",owner,{expectedRevision:summary.group.revision},409);
