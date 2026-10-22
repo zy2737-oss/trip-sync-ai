@@ -46,3 +46,18 @@ test("uses server authorization, JSON mode and non-thinking generation", async (
   await assert.rejects(generateAIItinerary(input, "test-key", "deepseek-flash", async () => new Response("", { status: 402 })), error => error instanceof ItineraryProviderError && error.status === 402);
   await assert.rejects(generateAIItinerary(input, "test-key", "deepseek-flash", async () => Response.json({ choices: [{ finish_reason: "length", message: { content: "{}" } }] })), /Incomplete/);
 });
+
+test("custom stop IDs survive generation, never claim a catalog pin, and unknown IDs are rejected",()=>{
+  const id="custom-12345678-1234-1234-1234-123456789012";
+  const activity={id,name:"Tokyo Tower",priority:"must",timing:"Flexible",location:"Minato",description:"Short visit"};
+  const customInput={...input,travelers:[{label:"Traveler 1",answers:input.answers,mustVisits:["Tokyo Tower"],customActivities:[activity]}]};
+  const p=example();p.days[0].stops[0]={...p.days[0].stops[0],title:"Tokyo Tower",customActivityId:id,locationId:"sensoji"};
+  const result=parseAIItinerary(JSON.stringify(p),customInput);
+  assert.equal(result.days[0].stops[0].customActivityId,id);assert.equal(result.days[0].stops[0].locationId,undefined);
+  assert.equal(result.reviewNotes.some(n=>n.includes("Custom must-visit not scheduled")),false);
+  assert.throws(()=>parseAIItinerary(JSON.stringify(p),input),/Unknown custom/);
+  const travelers=Array.from({length:12},(_,i)=>({label:`Traveler ${i+1}`,answers:input.answers,mustVisits:[],customActivities:Array.from({length:3},(_,j)=>({...activity,id:`custom-${String(i*3+j).padStart(8,"0")}-1234-1234-1234-123456789012`,name:`${i}-${j}-`+"x".repeat(90)}))}));
+  const missing=parseAIItinerary(JSON.stringify(example()),{...input,travelers});
+  assert.ok(missing.reviewNotes.length<=12);assert.ok(missing.reviewNotes.every(n=>n.length<=600));
+  for(const traveler of travelers)for(const activity of traveler.customActivities)assert.ok(missing.reviewNotes.some(n=>n.includes(activity.name)));
+});

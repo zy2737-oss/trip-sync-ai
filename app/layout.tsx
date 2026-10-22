@@ -5,6 +5,7 @@ export const metadata: Metadata = {
   title: "TripSync AI | Fair group travel planning",
   description: "Combine each traveler’s preferences into one transparent, balanced group itinerary.",
   icons: { icon: "/favicon.svg", shortcut: "/favicon.svg" },
+  referrer: "no-referrer",
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {

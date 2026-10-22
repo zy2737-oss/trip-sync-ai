@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { restaurantRequest, searchRestaurants } from "../lib/restaurant-search.ts";
+import { searchOSMRestaurants } from "../lib/osm-restaurants.ts";
 
 test("only the ten defined meals and known budgets can reach the provider", () => {
   for (const day of ["01", "02", "03", "04", "05"]) {
@@ -37,4 +38,16 @@ test("maps provider data faithfully; excludes closed places and unsafe URLs", as
 
 test("provider errors cannot turn into fake restaurant results", async () => {
   await assert.rejects(searchRestaurants(restaurantRequest("01", "lunch", "mid"), "test-key", async () => new Response("unavailable", { status: 403 })), /status 403/);
+});
+
+test("no-key restaurant directory uses a bounded Photon category query, not invented prices or hours",async()=>{
+  const feature=(p={},coords=[139.796,35.711])=>({properties:{osm_type:"N",osm_id:123,name:"Named restaurant",osm_key:"amenity",osm_value:"restaurant",countrycode:"JP",city:"Tokyo",...p},geometry:{type:"Point",coordinates:coords}});
+  const result=await searchOSMRestaurants("01","lunch",async(url,init)=>{
+    assert.equal(url.origin,"https://photon.komoot.io");assert.equal(url.searchParams.get("include"),"osm.amenity.restaurant");assert.equal(url.searchParams.get("limit"),"3");assert.ok(url.searchParams.get("bbox"));assert.equal(url.searchParams.has("q"),false);assert.equal(init.headers.Authorization,undefined);
+    return Response.json({features:[feature(),feature(),feature({osm_id:124,osm_value:"shop"}),feature({osm_id:125},[0,0]),feature({osm_id:126,name:"Second restaurant"})]});
+  });
+  assert.equal(result.restaurants.length,2);assert.equal(result.source,"openstreetmap");assert.ok(Date.parse(result.checkedAt));assert.equal(result.restaurants[0].mapsUrl,"https://www.openstreetmap.org/node/123");assert.deepEqual(result.restaurants[0].hours,[]);assert.equal(result.restaurants[0].priceLevel,undefined);assert.ok(result.note.includes("NOT been filtered or verified"));
+  await assert.rejects(searchOSMRestaurants("06","lunch"),/Unsupported/);
+  await assert.rejects(searchOSMRestaurants("01","lunch",async()=>new Response("",{status:503})),/unavailable/);
+  await assert.rejects(searchOSMRestaurants("01","lunch",async()=>Response.json({bad:[]})),/Incomplete/);
 });

@@ -1,0 +1,1 @@
+ALTER TABLE `trip_members` ADD `custom_activities` text;

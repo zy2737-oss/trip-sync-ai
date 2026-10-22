@@ -1,12 +1,12 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useTripGroup } from "@/hooks/use-trip-group";
 import {
   ArrowLeft,
   Check,
   ChevronRight,
   CircleDollarSign,
-  CloudSun,
   Footprints,
   Heart,
   MapPin,
@@ -23,6 +23,14 @@ import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Label } from "@/components/ui/label";
 import { DailyItinerary } from "@/components/daily-itinerary";
 import { AttractionCard } from "@/components/attraction-card";
+import { CustomActivities } from "@/components/custom-activities";
+import { ItineraryRevision } from "@/components/itinerary-revision";
+import { evidenceTime } from "@/components/route-check-panel";
+import type { CustomActivity } from "@/lib/custom-activities";
+import { Input } from "@/components/ui/input";
+import { TravelStyleCard, GroupTravelStyles, StyleIcon } from "@/components/travel-style-card";
+import { scoreTravelStyle, styleQuestions, styleAnswersSchema, styleIds, travelStyles, type StyleAnswers } from "@/lib/travel-personality";
+import type { Profile } from "@/lib/group-contract";
 import type { WalkingMode } from "@/lib/itinerary-walking";
 import type { AIItinerary } from "@/lib/ai-itinerary";
 
@@ -35,14 +43,24 @@ type Place = {
   priceLevel?: string;
   status?: string;
   source: "google_places" | "demo";
+  checkedAt?: string | null;
 };
 
-const travelers = [
-  { name: "Emma", initials: "EM", color: "bg-[#de5b48]", status: "You" },
-  { name: "Alex", initials: "AL", color: "bg-[#315b7d]", status: "Complete" },
-  { name: "Maya", initials: "MY", color: "bg-[#7c5d91]", status: "Complete" },
-  { name: "Jordan", initials: "JO", color: "bg-[#3e8068]", status: "Complete" },
-];
+type PlaceChoice = "must" | "interested" | "skip";
+const memberColors = ["bg-[#de5b48]", "bg-[#315b7d]", "bg-[#7c5d91]", "bg-[#3e8068]", "bg-[#b07d2b]", "bg-[#4a6fa5]"];
+const defaultAnswers: Record<string, string> = { pace: "balanced", walking: "moderate", budget: "mid", food: "mixed", together: "mostly" };
+const defaultPlaceChoices: Record<string, PlaceChoice> = { sensoji: "interested", teamlab: "interested", meiji: "interested", museum: "interested", shibuya: "interested", tsukiji: "interested" };
+
+function mostCommon(values: string[], fallback: string) {
+  if (!values.length) return fallback;
+  const counts = new Map<string, number>();
+  values.forEach((v) => counts.set(v, (counts.get(v) ?? 0) + 1));
+  return [...counts.entries()].sort((a, b) => b[1] - a[1])[0][0];
+}
+function mostRestrictive(values: string[], order: string[], fallback: string) {
+  if (!values.length) return fallback;
+  return order.find((option) => values.includes(option)) ?? fallback;
+}
 
 const questions = [
   {
@@ -103,12 +121,12 @@ const questions = [
 ];
 
 const fallbackPlaces: Place[] = [
-  { id: "sensoji", name: "Sensō-ji", area: "Asakusa", rating: 4.5, priceLevel: "Free", status: "Operational", source: "demo" },
-  { id: "teamlab", name: "teamLab Borderless", area: "Azabudai Hills", rating: 4.6, priceLevel: "$$", status: "Operational", source: "demo" },
-  { id: "meiji", name: "Meiji Jingu", area: "Harajuku", rating: 4.6, priceLevel: "Free", status: "Operational", source: "demo" },
-  { id: "museum", name: "Tokyo National Museum", area: "Ueno", rating: 4.5, priceLevel: "$", status: "Operational", source: "demo" },
-  { id: "shibuya", name: "Shibuya Sky", area: "Shibuya", rating: 4.6, priceLevel: "$$", status: "Operational", source: "demo" },
-  { id: "tsukiji", name: "Tsukiji Outer Market", area: "Tsukiji", rating: 4.2, priceLevel: "$", status: "Operational", source: "demo" },
+  { id: "sensoji", name: "Sensō-ji", area: "Asakusa", rating: 4.5, priceLevel: "Free", status: "Unverified", source: "demo" },
+  { id: "teamlab", name: "teamLab Borderless", area: "Azabudai Hills", rating: 4.6, priceLevel: "$$", status: "Unverified", source: "demo" },
+  { id: "meiji", name: "Meiji Jingu", area: "Harajuku", rating: 4.6, priceLevel: "Free", status: "Unverified", source: "demo" },
+  { id: "museum", name: "Tokyo National Museum", area: "Ueno", rating: 4.5, priceLevel: "$", status: "Unverified", source: "demo" },
+  { id: "shibuya", name: "Shibuya Sky", area: "Shibuya", rating: 4.6, priceLevel: "$$", status: "Unverified", source: "demo" },
+  { id: "tsukiji", name: "Tsukiji Outer Market", area: "Tsukiji", rating: 4.2, priceLevel: "$", status: "Unverified", source: "demo" },
 ];
 
 const answerLabels: Record<string, string> = {
@@ -121,30 +139,99 @@ const answerLabels: Record<string, string> = {
 
 export default function Home() {
   const [screen, setScreen] = useState<Screen>("lobby");
+  useEffect(()=>{window.scrollTo(0,0);},[screen]);
   const [questionIndex, setQuestionIndex] = useState(0);
-  const [answers, setAnswers] = useState<Record<string, string>>({ pace: "balanced", walking: "moderate", budget: "mid", food: "mixed", together: "mostly" });
+  const [styleAnswers, setStyleAnswers] = useState<Partial<StyleAnswers>>({});
+  const [topPick, setTopPick] = useState<Profile["topPick"]>();
+  const [customActivities,setCustomActivities]=useState<CustomActivity[]>([]);
+  const [pendingCustom,setPendingCustom]=useState(false);
+  const [shareStyle, setShareStyle] = useState(false);
+  const [answers, setAnswers] = useState<Record<string, string>>(defaultAnswers);
   const [places, setPlaces] = useState<Place[]>(fallbackPlaces);
   const [placeSource, setPlaceSource] = useState<"google_places" | "demo">("demo");
   const [refreshing, setRefreshing] = useState(false);
-  const [placeChoices, setPlaceChoices] = useState<Record<string, "must" | "interested" | "skip">>({ sensoji: "interested", teamlab: "must", meiji: "interested", museum: "skip", shibuya: "must", tsukiji: "interested" });
-  const [conflictChoice, setConflictChoice] = useState("optional");
+  const [placeChoices, setPlaceChoices] = useState<Record<string, PlaceChoice>>(defaultPlaceChoices);
+  const [conflictChoice, setConflictChoice] = useState("alternative");
   const [walkingMode, setWalkingMode] = useState<WalkingMode>("standard");
   const [generatedItinerary, setGeneratedItinerary] = useState<AIItinerary>();
   const [generating, setGenerating] = useState(false);
   const [generationError, setGenerationError] = useState("");
+  const shared = useTripGroup();
+  const group = shared.snapshot?.group ?? null;
+  const responses = shared.snapshot?.responses ?? {};
+  const members = (shared.snapshot?.members ?? []).map((m,i) => ({...m, initials:m.name.slice(0,2).toUpperCase(),color:memberColors[i%memberColors.length]}));
+  const currentMemberId = shared.snapshot?.currentMemberId ?? null;
+  const currentMember = members.find(m=>m.id===currentMemberId) ?? null;
+  const isOrganizer = currentMember?.role === "organizer";
+  const completedMembers = members.filter(m=>m.completed);
+  const [nicknameInput,setNicknameInput]=useState("");
+  const [groupNameInput,setGroupNameInput]=useState("Japan graduation trip");
+  const [joinCodeInput,setJoinCodeInput]=useState("");
+  const [joinNameInput,setJoinNameInput]=useState("");
+  const [copyMessage,setCopyMessage]=useState("");
+  const [inviteUrl,setInviteUrl]=useState("");
+  const loadedMember=useRef<string|null>(null);
+  const loadedPlan=useRef<string>("");
+  useEffect(()=>{if(shared.invite)setJoinCodeInput(shared.invite);},[shared.invite]);
+  useEffect(()=>{
+    if(!shared.snapshot)return;
+    if(loadedMember.current!==shared.snapshot.currentMemberId){
+      const own=shared.snapshot.responses[shared.snapshot.currentMemberId];
+      setAnswers(own?{...defaultAnswers,...own.answers}:defaultAnswers);
+      setPlaceChoices(own?{...defaultPlaceChoices,...own.placeChoices}:defaultPlaceChoices);
+      setStyleAnswers(own?.styleAnswers ?? {});setTopPick(own?.topPick);setShareStyle(own?.shareStyle ?? false);
+      setCustomActivities(own?.customActivities??[]);setPendingCustom(false);
+      loadedMember.current=shared.snapshot.currentMemberId;
+    }
+    setGeneratedItinerary(shared.snapshot.itinerary);
+    const planKey=`${shared.snapshot.group.code}:${shared.snapshot.planRevision}:${shared.snapshot.conflictChoice}`;
+    if(loadedPlan.current!==planKey){setConflictChoice(shared.snapshot.conflictChoice);loadedPlan.current=planKey;}
+    setInviteUrl(shared.invitation());
+  },[shared.snapshot]);
+  const planStale=!!shared.snapshot?.itinerary && shared.snapshot.planRevision!==group?.revision;
+  async function copyLink(privateLink=false){
+    try{await navigator.clipboard.writeText(privateLink?shared.recovery():shared.invitation());setCopyMessage(privateLink?"Private recovery link copied. Keep it secret — it grants your access.":"Invitation copied. Send it to your friends.");}
+    catch{setCopyMessage("Clipboard unavailable. Select and copy the invitation below.");}
+  }
+  function leaveGroup(){if(window.confirm("Leave this device session? Copy your private recovery link first if you want to return.")){shared.leave();loadedMember.current=null;setScreen("lobby");setInviteUrl("");setGeneratedItinerary(undefined);}}
+  async function removeGroup(){if(window.confirm("Delete this group, all profiles and its saved itinerary for everyone? This cannot be undone.")){if(await shared.remove()){loadedMember.current=null;setScreen("lobby");setInviteUrl("");setGeneratedItinerary(undefined);}}}
+  async function handleCreateGroup(){await shared.enter("create",groupNameInput.trim()||"Our trip",nicknameInput);}
+  async function handleJoinGroup(){await shared.enter("join",joinCodeInput.trim().toUpperCase(),joinNameInput);}
+  async function markCurrentCompleteAndShow(target:Screen){
+    const parsed=styleAnswersSchema.safeParse(styleAnswers);
+    if(!parsed.success || !topPick){shared.setError("Complete the six style questions and choose your #1 attraction before submitting.");return;}
+    if(pendingCustom){shared.setError("Save or clear unfinished custom activities first.");return;}
+    const saved=await shared.save({answers:answers as Profile["answers"],placeChoices,customActivities,completed:true,styleAnswers:parsed.data,topPick,shareStyle});
+    if(saved)setScreen(target);
+  }
+
+  const aggregatedAnswers = useMemo<Record<string, string>>(() => {
+    const done = completedMembers.map((m) => responses[m.id]).filter(Boolean);
+    if (!done.length) return answers;
+    return {
+      pace: mostCommon(done.map((r) => r.answers.pace), "balanced"),
+      walking: mostRestrictive(done.map((r) => r.answers.walking), ["light", "moderate", "active"], "moderate"),
+      budget: mostRestrictive(done.map((r) => r.answers.budget), ["value", "mid", "flex"], "mid"),
+      food: mostCommon(done.map((r) => r.answers.food), "mixed"),
+      together: mostRestrictive(done.map((r) => r.answers.together), ["together", "mostly", "flexible"], "mostly"),
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [members, responses]);
+  const hasBudgetConflict = useMemo(() => {
+    const done = completedMembers.map((m) => responses[m.id]).filter(Boolean);
+    const hasValue = done.some((r) => r.answers.budget === "value");
+    const hasSplurge = done.some((r) => r.answers.budget === "flex" || r.answers.food === "destination");
+    return hasValue && hasSplurge;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [members, responses]);
 
   async function generateItinerary() {
-    setGenerating(true); setGenerationError("");
+    if(!group)return;
+    setGenerating(true);setGenerationError("");
     try {
-      const response = await fetch("/api/itinerary", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ answers, mustVisits: places.filter(place => placeChoices[place.id] === "must").map(place => place.name), conflictChoice }),
-      });
-      const data = await response.json() as { itinerary?: AIItinerary; message?: string };
-      if (!response.ok || !data.itinerary) throw new Error(data.message ?? "Could not generate this itinerary.");
-      setGeneratedItinerary(data.itinerary); setWalkingMode(answers.walking === "light" ? "reduced" : "standard"); setScreen("itinerary");
-    } catch (error) { setGenerationError(error instanceof Error ? error.message : "Generation failed. Try again."); }
-    finally { setGenerating(false); }
+      const saved=await shared.update("itinerary",{conflictChoice,expectedRevision:group.revision});
+      if(saved?.itinerary){setGeneratedItinerary(saved.itinerary);setWalkingMode(aggregatedAnswers.walking==="light"?"reduced":"standard");setScreen("itinerary");}
+    } finally {setGenerating(false);}
   }
 
   async function refreshPlaces() {
@@ -182,14 +269,32 @@ export default function Home() {
     return () => lifecycle.abort();
   }, [conflictChoice]);
 
-  const currentQuestion = questions[questionIndex];
+  const personalityCount = styleQuestions.length;
+  const questionCount = personalityCount + questions.length;
+  const isStyleQuestion = questionIndex < personalityCount;
+  const currentQuestion = isStyleQuestion ? styleQuestions[questionIndex] : questions[questionIndex-personalityCount];
+  const questionValue = currentQuestion ? (isStyleQuestion ? styleAnswers[currentQuestion.key as keyof StyleAnswers] : answers[currentQuestion.key]) : undefined;
+  const personality = scoreTravelStyle(styleAnswers);
+  const groupStyleEntries = members.flatMap(member=>{
+    const result=isOrganizer?scoreTravelStyle(responses[member.id]?.styleAnswers):member.sharedStyle;
+    return member.completed && result ? [{id:member.id,name:member.name,result}] : [];
+  });
   const mustVisits = useMemo(() => places.filter((place) => placeChoices[place.id] === "must"), [places, placeChoices]);
-  const setChoice = (placeId: string, value: "must" | "interested" | "skip") => setPlaceChoices((current) => ({ ...current, [placeId]: value }));
-  const nextQuestion = () => questionIndex < questions.length ? setQuestionIndex((current) => current + 1) : setScreen("profile");
+  const mustCount=mustVisits.length+customActivities.filter(a=>a.priority==="must").length;
+  const allMustVisits=[...mustVisits,...customActivities.filter(a=>a.priority==="must").map(a=>({id:a.id,name:a.name,area:a.location}))];
+  function updateCustomActivities(next:CustomActivity[]){setCustomActivities(next);if(topPick?.startsWith("custom-")&&!next.some(a=>a.id===topPick&&a.priority==="must"))setTopPick(undefined);}
+  function customTopPick(id:string){const activity=customActivities.find(a=>a.id===id);if(!activity||(mustCount>=3&&activity.priority!=="must"))return;setCustomActivities(current=>current.map(a=>a.id===id?{...a,priority:"must"}:a));setTopPick(id);}
+  const setChoice = (placeId: string, value: PlaceChoice) => {setPlaceChoices((current) => ({ ...current, [placeId]: value }));if(placeId===topPick && value!=="must")setTopPick(undefined);};
+  const chooseTopPick = (placeId: string) => {if(mustCount>=3 && placeChoices[placeId]!=="must")return;setChoice(placeId,"must");setTopPick(placeId as Profile["topPick"]);};
+  const answerQuestion = (value:string) => {if(isStyleQuestion)setStyleAnswers(current=>({...current,[currentQuestion.key]:value}));else setAnswers(current=>({...current,[currentQuestion.key]:value}));};
+  const nextQuestion = () => questionIndex < questionCount ? setQuestionIndex((current) => current + 1) : setScreen("profile");
+  useEffect(()=>{if(screen==="quiz")window.scrollTo(0,0);},[questionIndex,screen]);
 
   return (
     <main className="min-h-screen bg-background text-foreground">
       <AppHeader screen={screen} onHome={() => setScreen("lobby")} />
+      {shared.error && <div role="alert" className="mx-auto mt-4 max-w-5xl rounded-xl bg-[#fff0ec] p-4 text-sm text-[#b64735]">{shared.error} <button className="ml-3 underline" onClick={()=>shared.refresh()}>Retry</button>{!group && shared.session && <button className="ml-3 underline" onClick={()=>shared.leave()}>Forget this device session</button>}</div>}
+      {shared.hydrated && shared.session && !group && <p role="status" className="mx-auto max-w-5xl p-4">Connecting to your saved group…</p>}
 
       {screen === "lobby" && (
         <section className="mx-auto grid w-full max-w-6xl gap-7 px-4 pb-16 pt-6 sm:px-7 lg:grid-cols-[1.4fr_0.8fr] lg:pt-10">
@@ -198,30 +303,77 @@ export default function Home() {
               <img src="https://thumb.wikimedia.org/wikipedia/commons/thumb/9/94/Shibuya_Crossing_in_Tokyo.jpg/960px-Shibuya_Crossing_in_Tokyo.jpg" alt="Night view of Shibuya Crossing in Tokyo" className="absolute inset-0 h-full w-full object-cover opacity-55" />
               <div className="absolute inset-0 bg-gradient-to-t from-[#102b3c] via-[#102b3c]/65 to-transparent" />
               <div className="relative flex min-h-[500px] flex-col justify-end p-6 sm:p-9">
-                <div className="mb-auto flex items-center justify-between"><Badge className="border-white/20 bg-white/12 px-3 py-1 text-white backdrop-blur">TRIP · TOKYO</Badge><span className="rounded-full border border-white/20 bg-black/15 px-3 py-1 text-sm backdrop-blur">May 20–24</span></div>
-                <p className="mb-2 text-sm font-semibold uppercase tracking-[0.2em] text-[#ffd0c5]">Japan graduation trip</p>
+                <div className="mb-auto flex items-center justify-between"><Badge className="border-white/20 bg-white/12 px-3 py-1 text-white backdrop-blur">TRIP · TOKYO</Badge><span className="rounded-full border border-white/20 bg-black/15 px-3 py-1 text-sm backdrop-blur">5 days in Tokyo</span></div>
+                <p className="mb-2 text-sm font-semibold uppercase tracking-[0.2em] text-[#ffd0c5]">{group ? group.name : "Japan graduation trip"}</p>
                 <h1 className="max-w-xl text-4xl font-semibold leading-[1.04] tracking-[-0.04em] sm:text-6xl">Build the trip everyone wants to take.</h1>
-                <p className="mt-4 max-w-xl text-base leading-7 text-white/78 sm:text-lg">Four travelers. One five-day plan. TripSync turns everyone’s preferences and limits into a fair itinerary.</p>
-                <div className="mt-7 flex flex-wrap gap-3"><Button size="lg" className="h-12 rounded-full bg-[#f26a52] px-6 text-white hover:bg-[#db5843]" onClick={() => setScreen("quiz")}>Answer as Emma <ChevronRight className="ml-1 h-4 w-4" /></Button><Button size="lg" variant="outline" className="h-12 rounded-full border-white/30 bg-white/8 px-6 text-white hover:bg-white/16 hover:text-white" onClick={() => setScreen("group")}>Preview group plan</Button></div>
+                <p className="mt-4 max-w-xl text-base leading-7 text-white/78 sm:text-lg">Share your preferences. Get one Tokyo plan that works for everyone.</p>
+                <p className="mt-4 text-sm text-[#ffd0c5]">About 5 minutes · No sign-up</p>
+                {group && currentMember ? (
+                  <div className="mt-7 flex flex-wrap items-center gap-3"><Button size="lg" className="h-12 rounded-full bg-[#f26a52] px-6 text-white hover:bg-[#db5843]" onClick={() => { setQuestionIndex(0); setScreen("quiz"); }}>Answer as {currentMember.name} <ChevronRight className="ml-1 h-4 w-4" /></Button><Button size="lg" variant="outline" className="h-12 rounded-full border-white/30 bg-white/8 px-6 text-white hover:bg-white/16 hover:text-white" onClick={() => setScreen("group")}>View group summary</Button><span className="rounded-full bg-white/15 px-3 py-1 text-sm">Invite code: <strong>{group.code}</strong></span></div>
+                ) : (
+                  <p className="mt-7 text-sm text-white/75">Create or join a group to start.</p>
+                )}
               </div>
             </div>
           </Card>
 
           <div className="space-y-5">
-            <Card className="border-[#dce4e7] bg-white p-5 shadow-sm sm:p-6">
-              <div className="flex items-start justify-between gap-3"><div><p className="text-sm font-semibold text-[#dd5947]">GROUP LOBBY</p><h2 className="mt-1 text-2xl font-semibold tracking-tight">3 of 4 ready</h2></div><Users className="h-6 w-6 text-[#315b7d]" /></div>
-              <Progress value={75} className="mt-5 h-2 bg-[#e9eff1] [&>div]:bg-[#ef6a53]" />
-              <div className="mt-5 space-y-3">
-                {travelers.map((traveler) => (
-                  <div key={traveler.name} className="flex items-center gap-3 rounded-2xl border border-[#e2e9eb] p-3">
-                    <span className={`grid h-10 w-10 place-items-center rounded-full text-xs font-semibold text-white ${traveler.color}`}>{traveler.initials}</span>
-                    <div className="min-w-0 flex-1"><p className="font-medium">{traveler.name}</p><p className="text-sm text-muted-foreground">{traveler.status === "You" ? "Your quiz is waiting" : "Traveler profile ready"}</p></div>
-                    {traveler.status === "Complete" ? <span className="grid h-7 w-7 place-items-center rounded-full bg-[#e3f3ed] text-[#2d775f]"><Check className="h-4 w-4" /></span> : <Badge variant="outline" className="border-[#f2b5a9] text-[#c84b37]">You</Badge>}
-                  </div>
-                ))}
-              </div>
-            </Card>
-            <Card className="border-[#dce4e7] bg-[#f5f8f8] p-5 sm:p-6"><div className="flex items-center justify-between gap-3"><div><div className="flex items-center gap-2 text-sm font-semibold text-[#315b7d]"><span className="h-2 w-2 rounded-full bg-[#3c8f72]" /> PLACE DATA</div><p className="mt-2 text-sm leading-6 text-muted-foreground">{placeSource === "google_places" ? "Live Google Places data connected" : "Demo dataset active · Google Places adapter ready"}</p></div><Button aria-label="Refresh place data" size="icon" variant="outline" className="rounded-full" onClick={refreshPlaces} disabled={refreshing}><RefreshCw className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`} /></Button></div></Card>
+            {!group ? (
+              <Card className="border-[#dce4e7] bg-white p-5 shadow-sm sm:p-6">
+                <p className="text-sm font-semibold text-[#dd5947]">START A GROUP</p>
+                <h2 className="mt-1 text-2xl font-semibold tracking-tight">Create or join</h2>
+                <div className="mt-5 space-y-3">
+                  <Label htmlFor="group-name">Trip name</Label>
+                  <Input id="group-name" value={groupNameInput} onChange={(e) => setGroupNameInput(e.target.value)} placeholder="Japan graduation trip" />
+                  <Label htmlFor="your-name">Your nickname</Label>
+                  <Input id="your-name" value={nicknameInput} onChange={(e) => setNicknameInput(e.target.value)} placeholder="e.g. Emma" />
+                  <Button className="h-11 w-full rounded-full bg-[#17384d] hover:bg-[#0f2c3f]" disabled={shared.busy || !shared.hydrated || !!shared.session} onClick={handleCreateGroup}>Create group</Button>
+                </div>
+                <div className="my-5 flex items-center gap-3 text-xs text-muted-foreground"><span className="h-px flex-1 bg-[#e2e9eb]" />OR JOIN WITH A CODE<span className="h-px flex-1 bg-[#e2e9eb]" /></div>
+                <div className="space-y-3">
+                  <Label htmlFor="join-code">Invite code</Label>
+                  <Input id="join-code" value={joinCodeInput} onChange={(e) => setJoinCodeInput(e.target.value)} placeholder="Paste the invite code or open your invitation" />
+                  <Label htmlFor="join-name">Your nickname</Label>
+                  <Input id="join-name" value={joinNameInput} onChange={(e) => setJoinNameInput(e.target.value)} placeholder="e.g. Alex" />
+                  <Button variant="outline" className="h-11 w-full rounded-full" disabled={shared.busy || !shared.hydrated || !!shared.session} onClick={handleJoinGroup}>Join group</Button>
+                </div>
+
+                <p className="mt-4 text-xs leading-5 text-muted-foreground">Only you and the organizer see your answers. Save your private recovery link to keep access.</p>
+              </Card>
+            ) : (
+              <Card className="border-[#dce4e7] bg-white p-5 shadow-sm sm:p-6">
+                <div className="flex items-start justify-between gap-3"><div><p className="text-sm font-semibold text-[#dd5947]">GROUP LOBBY · {group.code}</p><h2 className="mt-1 text-2xl font-semibold tracking-tight">{members.length ? `${completedMembers.length} of ${members.length} ready` : "No travelers yet"}</h2></div><Users className="h-6 w-6 text-[#315b7d]" /></div>
+                <Progress value={members.length ? (completedMembers.length / members.length) * 100 : 0} className="mt-5 h-2 bg-[#e9eff1] [&>div]:bg-[#ef6a53]" />
+                <div className="mt-5 space-y-3">
+                  {members.map((member) => {
+                    const done = member.completed;
+                    const isYou = member.id === currentMemberId;
+                    return (
+                      <button key={member.id} type="button" disabled={!isYou} onClick={() => {setQuestionIndex(0);setScreen("quiz");}} className={`flex w-full items-center gap-3 rounded-2xl border p-3 text-left transition ${isYou ? "border-[#ef6a53] bg-[#fff4f0]" : "border-[#e2e9eb] hover:border-[#9eb1b8]"}`}>
+                        <span className={`grid h-10 w-10 shrink-0 place-items-center rounded-full text-xs font-semibold text-white ${member.color}`}>{member.initials}</span>
+                        <span className="min-w-0 flex-1"><span className="block font-medium">{member.name}{isYou ? " (you)" : ""}</span><span className="block text-sm text-muted-foreground">{done ? (isYou ? "Submitted — tap to edit yours" : "Profile submitted") : (isYou ? "Tap to fill in your questionnaire" : "Waiting for their submission")}</span></span>
+                        {done ? <span className="grid h-7 w-7 place-items-center rounded-full bg-[#e3f3ed] text-[#2d775f]"><Check className="h-4 w-4" /></span> : <Badge variant="outline" className="border-[#f2b5a9] text-[#c84b37]">Waiting</Badge>}
+                      </button>
+                    );
+                  })}
+                  {!members.length && <p className="text-sm text-muted-foreground">Add the first traveler below.</p>}
+                </div>
+                <div className="mt-5 space-y-3 border-t pt-5">
+                  <Label htmlFor="invitation-link">Invite friends on their own devices</Label>
+                  <Input id="invitation-link" readOnly value={inviteUrl} onFocus={e=>e.target.select()} />
+                  <Button disabled={shared.busy} className="w-full rounded-full bg-[#17384d]" onClick={()=>copyLink()}>Copy invitation link</Button>
+                  <Button variant="outline" className="w-full rounded-full" onClick={()=>copyLink(true)}>Copy my private recovery link</Button>
+                  {copyMessage && <p role="status" className="text-sm text-[#315b7d]">{copyMessage}</p>}
+                  <p className="text-xs leading-5 text-muted-foreground">{isOrganizer?"Generate once everyone is ready.":"Your organizer will generate the shared plan."}</p>
+                  <Button variant="outline" className="w-full rounded-full" onClick={()=>shared.refresh()}>Refresh group</Button>
+                  {shared.snapshot?.itinerary && <Button className="w-full rounded-full bg-[#17384d]" onClick={()=>setScreen("itinerary")}>View shared itinerary</Button>}
+                  <button type="button" disabled={shared.busy} className="text-xs text-muted-foreground underline" onClick={leaveGroup}>Leave this device session</button>
+                  {isOrganizer && <button type="button" disabled={shared.busy} className="ml-4 text-xs text-[#b64735] underline" onClick={removeGroup}>Delete group &amp; saved data</button>}
+                </div>
+              </Card>
+            )}
+            <Card className="border-[#dce4e7] bg-white p-5 sm:p-6"><p className="text-xs font-semibold uppercase tracking-[0.16em] text-[#d9513f]">What is your travel style?</p><p className="mt-2 text-sm leading-6 text-muted-foreground">Discover your travel style.</p><div className="mt-4 grid grid-cols-2 gap-3">{styleIds.map(id=><div key={id} className="flex items-center gap-2 text-xs font-medium"><span className="grid h-8 w-8 shrink-0 place-items-center rounded-xl" style={{background:travelStyles[id].softColor,color:travelStyles[id].color}}><StyleIcon id={id} className="h-4 w-4" /></span>{travelStyles[id].shortName}</div>)}</div></Card>
+            <details className="rounded-xl border border-[#dce4e7] px-5 py-2"><summary className="min-h-11 cursor-pointer py-3 text-xs text-muted-foreground">Place sources</summary><div className="flex items-center justify-between gap-3"><div><div className="flex items-center gap-2 text-sm font-semibold text-[#315b7d]"><span className="h-2 w-2 rounded-full bg-[#3c8f72]" /> PLACE DATA</div><p className="mt-2 text-sm leading-6 text-muted-foreground">{placeSource === "google_places" ? "Google Places + curated guide" : "Curated Tokyo guide"}</p></div><Button aria-label="Refresh place data" size="icon" variant="outline" className="rounded-full" onClick={refreshPlaces} disabled={refreshing}><RefreshCw className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`} /></Button></div></details>
             <p className="px-2 text-xs leading-5 text-muted-foreground">Tokyo photo by Christophe95, licensed CC BY-SA 4.0 via Wikimedia Commons.</p>
           </div>
         </section>
@@ -229,26 +381,28 @@ export default function Home() {
 
       {screen === "quiz" && (
         <section className="mx-auto w-full max-w-3xl px-4 pb-16 pt-6 sm:px-7 sm:pt-10">
-          <div className="mb-8 flex items-center gap-4"><Button aria-label="Go back" variant="ghost" size="icon" className="rounded-full" onClick={() => questionIndex === 0 ? setScreen("lobby") : setQuestionIndex((value) => value - 1)}><ArrowLeft className="h-5 w-5" /></Button><div className="flex-1"><div className="mb-2 flex justify-between text-sm"><span className="font-medium">Emma’s travel style</span><span className="text-muted-foreground">{questionIndex + 1} of {questions.length + 1}</span></div><Progress value={((questionIndex + 1) / (questions.length + 1)) * 100} className="h-2 [&>div]:bg-[#ef6a53]" /></div></div>
-          {questionIndex < questions.length ? (
+          <div className="mb-8 flex items-center gap-4"><Button aria-label="Go back" variant="ghost" size="icon" className="rounded-full" onClick={() => questionIndex === 0 ? setScreen("lobby") : setQuestionIndex((value) => value - 1)}><ArrowLeft className="h-5 w-5" /></Button><div className="flex-1"><div className="mb-2 flex justify-between text-sm"><span className="font-medium">{currentMember ? `${currentMember.name}’s travel style` : "Your travel style"}</span><span className="text-muted-foreground">{questionIndex + 1} of {questionCount + 1}</span></div><Progress value={((questionIndex + 1) / (questionCount + 1)) * 100} className="h-2 [&>div]:bg-[#ef6a53]" /></div></div>
+          {questionIndex < questionCount ? (
             <div>
+              <p className="mb-3 text-xs font-medium text-muted-foreground">{isStyleQuestion ? `PART 1 · YOUR TRAVEL STYLE · ${questionIndex+1}/6` : `PART 2 · PRACTICAL PLANNING · ${questionIndex-personalityCount+1}/5`}</p>
               <p className="text-sm font-semibold tracking-[0.16em] text-[#d9513f]">{currentQuestion.eyebrow}</p><h1 className="mt-3 text-3xl font-semibold leading-tight tracking-[-0.03em] sm:text-5xl">{currentQuestion.title}</h1><p className="mt-4 max-w-2xl text-base leading-7 text-muted-foreground">{currentQuestion.help}</p>
-              <RadioGroup value={answers[currentQuestion.key]} onValueChange={(value) => setAnswers((current) => ({ ...current, [currentQuestion.key]: value }))} className="mt-8 grid gap-3">
+              <RadioGroup value={questionValue ?? ""} onValueChange={answerQuestion} className="mt-8 grid gap-3">
                 {currentQuestion.options.map(([value, title, description]) => (
-                  <Label key={value} htmlFor={`${currentQuestion.key}-${value}`} className={`group flex cursor-pointer items-start gap-4 rounded-2xl border p-5 transition ${answers[currentQuestion.key] === value ? "border-[#ef6a53] bg-[#fff4f0] shadow-[0_8px_30px_rgba(239,106,83,.10)]" : "border-[#dce4e7] bg-white hover:border-[#9eb1b8]"}`}><RadioGroupItem id={`${currentQuestion.key}-${value}`} value={value} className="mt-0.5 border-[#899aa0] text-[#e55e47]" /><span><span className="block text-base font-semibold">{title}</span><span className="mt-1 block text-sm font-normal leading-6 text-muted-foreground">{description}</span></span></Label>
+                  <Label key={value} htmlFor={`${currentQuestion.key}-${value}`} className={`group flex cursor-pointer items-start gap-4 rounded-2xl border p-5 transition ${questionValue === value ? "border-[#ef6a53] bg-[#fff4f0] shadow-[0_8px_30px_rgba(239,106,83,.10)]" : "border-[#dce4e7] bg-white hover:border-[#9eb1b8]"}`}><RadioGroupItem id={`${currentQuestion.key}-${value}`} value={value} className="mt-0.5 border-[#899aa0] text-[#e55e47]" /><span><span className="block text-base font-semibold">{title}</span><span className="mt-1 block text-sm font-normal leading-6 text-muted-foreground">{description}</span></span></Label>
                 ))}
               </RadioGroup>
-              <Button size="lg" className="mt-8 h-12 rounded-full bg-[#17384d] px-7 hover:bg-[#0f2c3f]" onClick={nextQuestion}>Continue</Button>
+              <Button size="lg" className="mt-8 h-12 rounded-full bg-[#17384d] px-7 hover:bg-[#0f2c3f]" disabled={!questionValue} onClick={nextQuestion}>Continue</Button>
             </div>
           ) : (
             <div>
-              <p className="text-sm font-semibold tracking-[0.16em] text-[#d9513f]">TOKYO PICKS</p><h1 className="mt-3 text-3xl font-semibold leading-tight tracking-[-0.03em] sm:text-5xl">What deserves a place in your Tokyo story?</h1><p className="mt-4 text-base leading-7 text-muted-foreground">Click a card for photos, highlights, and visit tips. Then mark up to three must-visits.</p>
+              <p className="text-sm font-semibold tracking-[0.16em] text-[#d9513f]">TOKYO PICKS</p><h1 className="mt-3 text-3xl font-semibold leading-tight tracking-[-0.03em] sm:text-5xl">What deserves a place in your Tokyo story?</h1><p className="mt-4 text-base leading-7 text-muted-foreground">Choose your #1 and up to two more must-visits. Tap a card to explore.</p>
               <div className="mt-8 grid gap-4 sm:grid-cols-2">
                 {places.map((place) => (
-                  <AttractionCard key={place.id} place={place} choice={placeChoices[place.id]} canSelectMust={mustVisits.length < 3 || placeChoices[place.id] === "must"} onChoice={(choice) => setChoice(place.id, choice)} />
+                  <AttractionCard key={place.id} place={place} choice={placeChoices[place.id]} canSelectMust={mustCount < 3 || placeChoices[place.id] === "must"} onChoice={(choice) => setChoice(place.id, choice)} isTopPick={topPick===place.id} onTopPick={()=>chooseTopPick(place.id)} access={shared.session??undefined} />
                 ))}
               </div>
-              <div className="mt-7 flex items-center justify-between gap-4"><p className="text-sm text-muted-foreground">{mustVisits.length}/3 must-visits selected</p><Button size="lg" className="h-12 rounded-full bg-[#17384d] px-7 hover:bg-[#0f2c3f]" onClick={nextQuestion}>Create my profile</Button></div>
+              <CustomActivities value={customActivities} access={shared.session??undefined} topPick={topPick} mustCount={mustCount} onChange={updateCustomActivities} onTopPick={customTopPick} onPendingChange={setPendingCustom}/>
+              <div className="mt-7 flex items-center justify-between gap-4"><p className="text-sm text-muted-foreground">{mustCount}/3 must-visits · {topPick ? "#1 selected" : "Choose your #1 to continue"}</p><Button disabled={!topPick || !personality || pendingCustom} size="lg" className="h-12 rounded-full bg-[#17384d] px-7 hover:bg-[#0f2c3f]" onClick={nextQuestion}>Create my profile</Button></div>
             </div>
           )}
         </section>
@@ -256,22 +410,40 @@ export default function Home() {
 
       {screen === "profile" && (
         <section className="mx-auto w-full max-w-5xl px-4 pb-16 pt-8 sm:px-7 sm:pt-12"><div className="grid gap-6 lg:grid-cols-[1fr_0.85fr]">
-          <Card className="relative overflow-hidden border-0 bg-[#17384d] p-7 text-white shadow-[0_22px_70px_rgba(23,56,77,.2)] sm:p-10"><Sparkles className="absolute right-8 top-8 h-8 w-8 text-[#f5b6a9]" /><p className="text-sm font-semibold uppercase tracking-[0.18em] text-[#f5b6a9]">Emma’s Travel DNA</p><h1 className="mt-5 max-w-lg text-4xl font-semibold leading-[1.05] tracking-[-0.04em] sm:text-6xl">The Curious City Balancer</h1><p className="mt-5 max-w-xl text-base leading-7 text-white/75">You want iconic Tokyo moments without turning every day into a race. A thoughtful splurge, moderate walking, and time to notice the city suit you best.</p><div className="mt-9 flex flex-wrap gap-2">{Object.values(answers).map((answer) => <Badge key={answer} className="border-white/15 bg-white/10 px-3 py-1.5 text-white">{answerLabels[answer]}</Badge>)}</div></Card>
-          <div className="space-y-5"><Card className="border-[#dce4e7] bg-white p-6"><p className="text-sm font-semibold text-[#d9513f]">YOUR MUST-VISITS</p><div className="mt-4 space-y-3">{(mustVisits.length ? mustVisits : places.slice(0, 2)).map((place, index) => <div key={place.id} className="flex items-center gap-3 rounded-2xl bg-[#f4f7f7] p-3"><span className="grid h-8 w-8 place-items-center rounded-full bg-[#17384d] text-sm font-semibold text-white">{index + 1}</span><div><p className="font-medium">{place.name}</p><p className="text-sm text-muted-foreground">{place.area}</p></div></div>)}</div></Card><Button size="lg" className="h-13 w-full rounded-full bg-[#ef6a53] text-white hover:bg-[#dc5944]" onClick={() => setScreen("group")}>Add my profile to the group</Button><button className="w-full text-center text-sm text-muted-foreground underline-offset-4 hover:underline" onClick={() => { setQuestionIndex(0); setScreen("quiz"); }}>Edit my answers</button></div>
+          <TravelStyleCard result={personality} name={currentMember?.name} />
+          <div className="space-y-5">
+            <Card className="border-[#dce4e7] bg-white p-6"><p className="text-sm font-semibold text-[#d9513f]">YOUR PLANNING ANSWERS</p><div className="mt-4 flex flex-wrap gap-2">{Object.values(answers).map(answer=><Badge key={answer} variant="secondary" className="px-3 py-1.5">{answerLabels[answer]}</Badge>)}</div></Card>
+            <Card className="border-[#dce4e7] bg-white p-6"><p className="text-sm font-semibold text-[#d9513f]">YOUR TOKYO PRIORITIES</p><div className="mt-4 space-y-3">{allMustVisits.sort((a,b)=>Number(b.id===topPick)-Number(a.id===topPick)).map(place=><div key={place.id} className={`flex items-center gap-3 rounded-2xl p-3 ${place.id===topPick?"bg-[#fff5dc]":"bg-[#f4f7f7]"}`}><span className="text-xs font-semibold text-[#805519]">{place.id===topPick?"#1":"Also"}</span><div><p className="font-medium">{place.name}</p><p className="text-sm text-muted-foreground">{place.area}</p></div></div>)}</div></Card>
+            {!!customActivities.length&&<Card className="border-[#dce4e7] bg-white p-6"><h2 className="font-semibold">Your custom activities</h2>{customActivities.map(a=><div key={a.id} className="mt-3 border-t pt-3 text-sm leading-6"><p className="font-medium">{a.name} · {a.priority==="must"?"Must-visit":"Interested"}</p><p>{a.timing} · {a.location}</p><p>{a.description}</p><p className="text-xs text-muted-foreground">{a.match?"Place identity confirmed; hours and availability unverified":"User-described; details unverified"}</p></div>)}</Card>}
+            <label className="flex cursor-pointer items-start gap-3 rounded-2xl border border-[#dce4e7] bg-white p-4"><input type="checkbox" checked={shareStyle} onChange={e=>setShareStyle(e.target.checked)} className="mt-1 h-4 w-4 accent-[#d9513f]" /><span><span className="block text-sm font-semibold">Share my style card with this group</span><span className="mt-1 block text-xs leading-5 text-muted-foreground">Optional. Only your style label is shared with fellow members. Your detailed answers remain visible only to you and the organizer.</span></span></label>
+            <Button size="lg" className="h-13 w-full rounded-full bg-[#ef6a53] text-white hover:bg-[#dc5944]" disabled={shared.busy || !personality || !topPick} onClick={()=>markCurrentCompleteAndShow("group")}>{shared.busy?"Saving…":"Submit my profile to the group"}</Button>
+            <button className="w-full text-center text-sm text-muted-foreground underline-offset-4 hover:underline" onClick={()=>{setQuestionIndex(0);setScreen("quiz");}}>Edit my answers</button>
+          </div>
         </div></section>
       )}
 
-      {screen === "group" && (
+      {screen === "group" && !isOrganizer && (
+        <section className="mx-auto max-w-3xl space-y-5 px-5 py-10"><h1 className="text-3xl font-semibold">Your group, on everyone’s device</h1><p>{currentMember?.completed?"Your profile is submitted.":"Submit your profile so the organizer can include you."} {completedMembers.length} of {members.length} travelers are ready.</p><p className="text-muted-foreground">Only the organizer sees everyone’s detailed preferences and generates the itinerary. Your answers stay editable on this device.</p><TravelStyleCard result={scoreTravelStyle(responses[currentMemberId??""]?.styleAnswers)} name={currentMember?.name} /><GroupTravelStyles entries={groupStyleEntries} /><Button onClick={()=>{setQuestionIndex(0);setScreen("quiz");}}>Edit my answers</Button><Button variant="outline" className="ml-3" onClick={()=>setScreen("lobby")}>Group lobby</Button>{shared.snapshot?.itinerary && <Button className="ml-3" onClick={()=>setScreen("itinerary")}>View shared itinerary</Button>}</section>
+      )}
+      {screen === "group" && isOrganizer && (
         <section className="mx-auto w-full max-w-6xl px-4 pb-20 pt-7 sm:px-7 sm:pt-10">
-          <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-end"><div><p className="text-sm font-semibold tracking-[0.16em] text-[#d9513f]">GROUP PROFILE</p><h1 className="mt-2 text-3xl font-semibold tracking-[-0.03em] sm:text-5xl">Your group agrees on more than you think.</h1></div><div className="flex -space-x-2">{travelers.map((traveler) => <span key={traveler.name} title={traveler.name} className={`grid h-10 w-10 place-items-center rounded-full border-2 border-background text-xs font-semibold text-white ${traveler.color}`}>{traveler.initials}</span>)}</div></div>
-          <div className="mt-8 grid gap-5 lg:grid-cols-3"><MetricCard icon={<Heart className="h-5 w-5" />} label="Shared energy" value="Culture + food" note="Chosen by 4 of 4 travelers" /><MetricCard icon={<Footprints className="h-5 w-5" />} label="Shared pace" value="Moderate" note="Plan around an 8,000-step daily cap" /><MetricCard icon={<CircleDollarSign className="h-5 w-5" />} label="Comfort zone" value="$80–$140" note="One optional splurge is workable" /></div>
+          <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-end"><div><p className="text-sm font-semibold tracking-[0.16em] text-[#d9513f]">GROUP PROFILE</p><h1 className="mt-2 text-3xl font-semibold tracking-[-0.03em] sm:text-5xl">Your group at a glance</h1></div><div className="flex -space-x-2">{members.map((member) => <span key={member.id} title={member.name} className={`grid h-10 w-10 place-items-center rounded-full border-2 border-background text-xs font-semibold text-white ${member.color}`}>{member.initials}</span>)}</div></div>
+          <p className="mt-3 text-sm text-muted-foreground">{completedMembers.length} of {members.length} travelers have submitted. {group ? ` · Group ${group.code}` : ""}.</p>
+          <div className="mt-6"><GroupTravelStyles entries={groupStyleEntries} privateView /></div>
+          <div className="mt-6 grid gap-5 lg:grid-cols-3"><MetricCard icon={<Heart className="h-5 w-5" />} label="Group pace" value={answerLabels[aggregatedAnswers.pace] ?? aggregatedAnswers.pace} note={completedMembers.length ? `From ${completedMembers.length} submitted profile${completedMembers.length > 1 ? "s" : ""}` : "Waiting for answers"} /><MetricCard icon={<Footprints className="h-5 w-5" />} label="Walking preference" value={answerLabels[aggregatedAnswers.walking] ?? aggregatedAnswers.walking} note="Plan around the most limited traveler" /><MetricCard icon={<CircleDollarSign className="h-5 w-5" />} label="Budget" value={answerLabels[aggregatedAnswers.budget] ?? aggregatedAnswers.budget} note="Protects the tightest budget" /></div>
           <div className="mt-6 grid gap-6 lg:grid-cols-[0.9fr_1.1fr]">
-            <Card className="border-[#dce4e7] bg-white p-6"><div className="flex items-center justify-between"><h2 className="text-xl font-semibold">Everyone gets a moment</h2><Badge className="bg-[#e3f3ed] text-[#23664f]">4/4 covered</Badge></div><div className="mt-5 space-y-4">{[["Emma", mustVisits[0]?.name ?? "teamLab Borderless", "Art & immersive experiences"],["Alex", "Sensō-ji", "History & traditional Tokyo"],["Maya", "Shibuya Sky", "Shopping & city views"],["Jordan", "Tokyo National Museum", "Museums & low-cost culture"]].map(([name, place, note], index) => <div key={name} className="flex gap-3"><span className={`mt-0.5 grid h-9 w-9 shrink-0 place-items-center rounded-full text-xs font-semibold text-white ${travelers[index].color}`}>{travelers[index].initials}</span><div><p className="font-medium">{place}</p><p className="text-sm text-muted-foreground">{name} · {note}</p></div></div>)}</div></Card>
-            <Card className="border-[#f0c7bd] bg-[#fff8f5] p-6"><div className="flex items-start gap-3"><span className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-[#f4d7cf] text-[#b64735]"><Utensils className="h-5 w-5" /></span><div><p className="text-sm font-semibold text-[#b64735]">1 DECISION NEEDED</p><h2 className="mt-1 text-xl font-semibold">Special dinner vs. daily budget</h2><p className="mt-2 text-sm leading-6 text-muted-foreground">Alex wants a premium sushi dinner. Jordan’s $80 daily cap makes it difficult as a required group activity.</p></div></div><RadioGroup value={conflictChoice} onValueChange={setConflictChoice} className="mt-5 gap-3">{[["alternative", "Choose a lower-cost alternative", "Everyone stays together · budget protected"],["optional", "Make the dinner optional", "Alex can splurge · others get a nearby casual option"],["exception", "Allow one budget exception", "Everyone joins · Jordan’s cap is relaxed for one evening"]].map(([value, title, description]) => <Label key={value} htmlFor={`conflict-${value}`} className={`flex cursor-pointer items-start gap-3 rounded-2xl border p-4 ${conflictChoice === value ? "border-[#ef6a53] bg-white" : "border-[#eadbd6] bg-white/55"}`}><RadioGroupItem id={`conflict-${value}`} value={value} className="mt-0.5 text-[#e75f48]" /><span><span className="block font-semibold">{title}</span><span className="mt-1 block text-sm font-normal text-muted-foreground">{description}</span></span></Label>)}</RadioGroup></Card>
+            <Card className="border-[#dce4e7] bg-white p-6"><div className="flex items-center justify-between"><h2 className="text-xl font-semibold">Top picks</h2><Badge className="bg-[#e3f3ed] text-[#23664f]">{completedMembers.length}/{members.length} submitted</Badge></div><div className="mt-5 space-y-4">{completedMembers.length ? completedMembers.map((member) => { const r = responses[member.id]; const firstMust = r ? places.find(p=>p.id===r.topPick) ?? r.customActivities?.find(a=>a.id===r.topPick) ?? places.find((p) => r.placeChoices[p.id as keyof typeof r.placeChoices] === "must") ?? r.customActivities?.find(a=>a.priority==="must") : undefined; return <div key={member.id} className="flex gap-3"><span className={`mt-0.5 grid h-9 w-9 shrink-0 place-items-center rounded-full text-xs font-semibold text-white ${member.color}`}>{member.initials}</span><div><p className="font-medium">{r?.topPick ? "#1 · " : ""}{firstMust?.name ?? "No must-visit picked yet"}</p><p className="text-sm text-muted-foreground">{member.name} · {r ? (answerLabels[r.answers.food] ?? "") : ""}</p></div></div>; }) : <p className="text-sm text-muted-foreground">No profiles submitted yet. Go back to the lobby and answer as at least one traveler.</p>}</div></Card>
+            {hasBudgetConflict ? (
+            <Card className="border-[#f0c7bd] bg-[#fff8f5] p-6"><div className="flex items-start gap-3"><span className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-[#f4d7cf] text-[#b64735]"><Utensils className="h-5 w-5" /></span><div><p className="text-sm font-semibold text-[#b64735]">1 DECISION NEEDED</p><h2 className="mt-1 text-xl font-semibold">Special dinner vs. daily budget</h2><p className="mt-2 text-sm leading-6 text-muted-foreground">Some travelers chose a tight daily budget while others want a splurge or food-led plan. Decide together how to handle the special dinner.</p></div></div><RadioGroup disabled={shared.busy} value={conflictChoice} onValueChange={setConflictChoice} className="mt-5 gap-3">{[["alternative", "Choose a lower-cost alternative", "Everyone stays together · budget protected"],["optional", "Make the dinner optional", "Those who want can splurge · others get a nearby casual option"],["exception", "Allow one budget exception", "Everyone joins · the tightest cap is relaxed for one evening"]].map(([value, title, description]) => <Label key={value} htmlFor={`conflict-${value}`} className={`flex cursor-pointer items-start gap-3 rounded-2xl border p-4 ${conflictChoice === value ? "border-[#ef6a53] bg-white" : "border-[#eadbd6] bg-white/55"}`}><RadioGroupItem id={`conflict-${value}`} value={value} className="mt-0.5 text-[#e75f48]" /><span><span className="block font-semibold">{title}</span><span className="mt-1 block text-sm font-normal text-muted-foreground">{description}</span></span></Label>)}</RadioGroup></Card>
+            ) : (
+            <Card className="border-[#b8d6cb] bg-[#eef7f2] p-6"><div className="flex items-start gap-3"><span className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-[#d7eadf] text-[#2d775f]"><Check className="h-5 w-5" /></span><div><p className="text-sm font-semibold text-[#2d775f]">NO DECISION NEEDED</p><h2 className="mt-1 text-xl font-semibold">No dinner conflict</h2><p className="mt-2 text-sm leading-6 text-muted-foreground">{completedMembers.length ? "Your dinner preferences align." : "Submit at least one profile to check for conflicts."}</p></div></div></Card>
+            )}
           </div>
-          <div className="mt-7 flex flex-col items-center justify-between gap-4 rounded-3xl bg-[#17384d] p-5 text-white sm:flex-row sm:p-6"><div><p className="font-semibold">Ready to generate your group draft.</p><p className="mt-1 text-sm text-white/65">Your choice will shape Day 4 before the final plan is generated.</p></div><Button size="lg" className="h-12 w-full rounded-full bg-[#ef6a53] px-7 hover:bg-[#dc5944] sm:w-auto" disabled={generating} onClick={generateItinerary}><Sparkles className="mr-2 h-4 w-4" /> {generating ? "Generating your trip…" : "Generate itinerary"}</Button></div>
-          <p className="mt-3 text-sm leading-6 text-muted-foreground">AI generation sends your preference choices to DeepSeek. Companion profiles are simulated. <a href="/data-use" target="_blank" rel="noopener noreferrer" className="underline">Data use & terms</a></p>
-          {generating && <p role="status" className="mt-3 text-sm text-[#315b7d]">Building five days with lunch, dinner, and low-walking alternatives. This may take up to a minute.</p>}
+          <Card className="mt-6 border-[#dce4e7] bg-white p-6"><h2 className="text-xl font-semibold">What each person chose</h2><div className="mt-5 space-y-3">{completedMembers.length ? completedMembers.map((member) => { const r = responses[member.id]; if (!r) return null; return <div key={member.id} className="flex flex-wrap items-center gap-2 rounded-2xl border border-[#e2e9eb] p-3"><span className={`grid h-9 w-9 shrink-0 place-items-center rounded-full text-xs font-semibold text-white ${member.color}`}>{member.initials}</span><span className="mr-1 font-medium">{member.name}</span>{Object.values(r.answers).map((value) => <Badge key={value} variant="secondary" className="px-2 py-1">{answerLabels[value] ?? value}</Badge>)}</div>; }) : <p className="text-sm text-muted-foreground">No submitted profiles yet.</p>}</div></Card>
+          {completedMembers.some(m=>responses[m.id]?.customActivities?.length>0)&&<Card className="mt-6 border-[#dce4e7] bg-white p-6"><h2 className="text-xl font-semibold">Custom requests from your group</h2><p className="mt-2 text-sm text-muted-foreground">Custom picks · Not mapped yet</p>{completedMembers.flatMap(member=>(responses[member.id]?.customActivities??[]).map(a=><div key={`${member.id}:${a.id}`} className="mt-4 rounded-xl bg-[#f3f6f6] p-4 text-sm leading-6"><p className="font-semibold">{member.name} · {a.name} · {responses[member.id].topPick===a.id?"#1":a.priority==="must"?"Must-visit":"Interested"}</p><p>When: {a.timing}<br/>Where: {a.location}<br/>What: {a.description}</p><p className="mt-2 text-xs text-muted-foreground">{a.match?`Matched via Photon · ${evidenceTime(a.match.queriedAt)}`:"Your description · Unverified"}</p></div>))}</Card>}
+          <div className="mt-7 flex flex-col items-center justify-between gap-4 rounded-3xl bg-[#17384d] p-5 text-white sm:flex-row sm:p-6"><div><p className="font-semibold">Ready to plan?</p></div><Button size="lg" className="h-12 w-full rounded-full bg-[#ef6a53] px-7 hover:bg-[#dc5944] sm:w-auto" disabled={shared.busy || generating || !members.length || completedMembers.length !== members.length} onClick={generateItinerary}><Sparkles className="mr-2 h-4 w-4" /> {generating ? "Generating your trip…" : "Generate itinerary"}</Button></div>
+          <p className="mt-3 text-sm leading-6 text-muted-foreground">Everyone must submit before generating. <a href="/data-use" target="_blank" rel="noopener noreferrer" className="underline">Data use & terms</a></p>
+          {generating && <p role="status" className="mt-3 text-sm text-[#315b7d]">Planning your trip… This may take a minute.</p>}
           {generationError && <p role="alert" className="mt-3 rounded-xl bg-[#fff0ec] p-4 text-sm text-[#b64735]">{generationError}</p>}
           <Button disabled={generating} variant="ghost" className="mt-3 rounded-full" onClick={() => { setGeneratedItinerary(undefined); setWalkingMode("standard"); setScreen("itinerary"); }}>Preview sample itinerary</Button>
         </section>
@@ -279,16 +451,19 @@ export default function Home() {
 
       {screen === "itinerary" && (
         <section className="mx-auto w-full max-w-6xl px-4 pb-20 pt-7 sm:px-7 sm:pt-10">
-          <div className="flex flex-col gap-5 sm:flex-row sm:items-end sm:justify-between"><div><div className="flex items-center gap-2 text-sm font-semibold text-[#2f7a61]"><span className="h-2 w-2 rounded-full bg-[#3f9d7b]" /> READY TO REVIEW</div><h1 className="mt-2 text-3xl font-semibold tracking-[-0.03em] sm:text-5xl">Five days, four travelers, no one left out.</h1><p className="mt-3 max-w-2xl text-base leading-7 text-muted-foreground">{walkingMode === "reduced" ? "A gentler version with shorter visits, seated breaks, and ride-first transfers." : "Built around each traveler’s priority interests and your dinner decision. Review the walking pace below."}</p></div><Button variant="outline" className="rounded-full" onClick={() => setScreen("group")}><ArrowLeft className="mr-2 h-4 w-4" /> Review decisions</Button></div>
+          <div className="flex flex-col gap-5 sm:flex-row sm:items-end sm:justify-between"><div><div className="flex items-center gap-2 text-sm font-semibold text-[#2f7a61]"><span className="h-2 w-2 rounded-full bg-[#3f9d7b]" /> READY TO REVIEW</div><h1 className="mt-2 text-3xl font-semibold tracking-[-0.03em] sm:text-5xl">Your Tokyo itinerary</h1>{walkingMode==="reduced"&&<p className="mt-3 text-sm text-muted-foreground">Less-walking preview</p>}</div><Button variant="outline" className="rounded-full" onClick={() => setScreen("group")}><ArrowLeft className="mr-2 h-4 w-4" /> Review decisions</Button></div>
+          {planStale && <p role="alert" className="mt-5 rounded-xl bg-[#fff0ec] p-4 text-[#b64735]">Group preferences changed. Generate a new draft.</p>}
+          {shared.snapshot?.acceptedAt && generatedItinerary && <p role="status" className="mt-5 text-[#2f7a61]">Draft accepted.</p>}
           <div className="mt-8 grid gap-5 lg:grid-cols-[1fr_280px]">
             <div className="space-y-4">
-              {walkingMode === "reduced" && <div role="status" className="rounded-2xl border border-[#b8d6cb] bg-[#eef7f2] p-4"><p className="flex items-center gap-2 font-semibold text-[#2f7a61]"><Footprints className="h-5 w-5" />Less-walking plan applied</p><p className="mt-2 text-sm leading-6 text-muted-foreground">All five days now include shorter browsing, more seated breaks, and ride-first transfers. Lunch, dinner, and your dinner decision stay in place. Actual steps depend on routes and venue layouts; taxis may add cost.</p></div>}
-              <DailyItinerary conflictChoice={conflictChoice} budget={answers.budget} walkingMode={walkingMode} generated={generatedItinerary} />
+              {walkingMode === "reduced" && <div role="status" className="rounded-2xl border border-[#b8d6cb] bg-[#eef7f2] p-4"><p className="flex items-center gap-2 font-semibold text-[#2f7a61]"><Footprints className="h-5 w-5" />Less-walking plan applied</p><p className="mt-2 text-sm leading-6 text-muted-foreground">Shorter visits and more breaks. Actual walking may vary.</p></div>}
+              <DailyItinerary conflictChoice={conflictChoice} budget={aggregatedAnswers.budget} walkingMode={walkingMode} generated={generatedItinerary} generatedAt={shared.snapshot?.generatedAt} access={shared.session??undefined} />
             </div>
-            <aside className="space-y-4"><Card className="border-[#dce4e7] bg-[#f4f7f7] p-5"><CloudSun className="h-6 w-6 text-[#315b7d]" /><h2 className="mt-4 font-semibold">Before you book</h2><p className="mt-2 text-sm leading-6 text-muted-foreground">Opening hours, prices, and availability can change. Verify current details before purchasing tickets or making reservations.</p></Card><Card className="border-[#dce4e7] bg-white p-5"><p className="text-sm font-semibold">{generatedItinerary ? "Generated with DeepSeek" : "Sample itinerary"}</p><p className="mt-3 text-sm leading-6 text-muted-foreground">Review each traveler’s priorities, daily costs, and unresolved conflicts before accepting. Coverage has not been independently scored.</p></Card><Button className="h-12 w-full rounded-full bg-[#ef6a53] text-white hover:bg-[#dc5944]">Accept this draft</Button><Button variant="outline" className="h-12 w-full rounded-full" aria-pressed={walkingMode === "reduced"} onClick={() => setWalkingMode((current) => current === "standard" ? "reduced" : "standard")}>{walkingMode === "reduced" ? "Restore original pace" : "Reduce walking"}</Button></aside>
+            <aside className="space-y-4">{isOrganizer && generatedItinerary && <Button disabled={shared.busy || planStale || !!shared.snapshot?.acceptedAt} onClick={()=>shared.update("accept",{expectedRevision:group?.revision,expectedGeneratedAt:shared.snapshot?.generatedAt??null})} className="h-12 w-full rounded-full bg-[#ef6a53] text-white hover:bg-[#dc5944]">{shared.snapshot?.acceptedAt?"Accepted":"Accept this draft"}</Button>}<ItineraryRevision busy={shared.busy||generating} disabledReason={!isOrganizer?"Only the organizer can update this plan.":!generatedItinerary?"Generate a group plan to request changes.":planStale?"Group answers changed. Generate a new draft first.":undefined} onRevise={async request=>{const result=await shared.update("revise",{request,expectedRevision:group?.revision,expectedGeneratedAt:shared.snapshot?.generatedAt??null,conflictChoice:shared.snapshot?.conflictChoice});if(result){setWalkingMode("standard");return true;}return false;}}/></aside>
           </div>
         </section>
       )}
+    <footer className="mx-auto max-w-6xl px-5 py-6 text-xs text-muted-foreground"><a href="/data-use" className="inline-flex min-h-11 items-center underline">Data &amp; sources</a></footer>
     </main>
   );
 }

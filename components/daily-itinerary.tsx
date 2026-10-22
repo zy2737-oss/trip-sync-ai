@@ -1,15 +1,22 @@
-import { Heart, MapPin, Utensils } from "lucide-react";
+"use client";
+import { useState } from "react";
+import { MapPin, Utensils } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { RestaurantOptions } from "@/components/restaurant-options";
 import { adjustWalking, type WalkingMode } from "@/lib/itinerary-walking";
 import type { AIItinerary } from "@/lib/ai-itinerary";
 import { DailyRouteMap } from "@/components/daily-route-map";
+import { StopFactSources } from "@/components/stop-fact-sources";
+import { evidenceTime, RouteCheckPanel, type EvidenceAccess } from "@/components/route-check-panel";
+import { buildDailyRoute,directionsUrl } from "@/lib/daily-route";
 
-type Stop = { time: string; title: string; detail: string; meal?: "Lunch" | "Dinner"; cost?: string };
+type Stop = { time: string; title: string; detail: string; meal?: "Lunch" | "Dinner"; cost?: string; locationId?: import("@/lib/daily-route").LocationId;customActivityId?:string };
 type Day = { day: string; title: string; area: string; people: string; note: string; stops: Stop[] };
 
-export function DailyItinerary({ conflictChoice, budget, walkingMode, generated }: { conflictChoice: string; budget: string; walkingMode: WalkingMode; generated?: AIItinerary }) {
+export function DailyItinerary({ conflictChoice, budget, walkingMode, generated, generatedAt, access }: { conflictChoice: string; budget: string; walkingMode: WalkingMode; generated?: AIItinerary; generatedAt?:string|null; access?:EvidenceAccess }) {
+  const [selected,setSelected]=useState<Record<string,{number:number;version:number}>>({});
+  function select(day:string,number:number,fromMap=false){setSelected(s=>({...s,[day]:{number,version:(s[day]?.version??0)+1}}));document.getElementById(fromMap?`day-${day}-stop-${number}`:`day-${day}-map`)?.scrollIntoView({behavior:"instant",block:"start"});}
   const sushiDinner: Stop = conflictChoice === "alternative"
     ? { time: "18:30–20:00", meal: "Dinner", title: "Casual sushi together", detail: "Choose a conveyor-belt or set-menu sushi spot around Ginza or Yurakucho. Agree on a per-person limit before ordering.", cost: "¥2,000–3,500 / person" }
     : conflictChoice === "exception"
@@ -57,28 +64,32 @@ export function DailyItinerary({ conflictChoice, budget, walkingMode, generated 
   ];
 
   return <div className="space-y-4">
-    <p className="text-sm leading-6 text-muted-foreground">{generated ? "AI-generated draft" : "Sample schedule"} · Times are local to Tokyo. Meal budgets are illustrative estimates, not live quotes. Choose restaurant candidates below; selecting a restaurant does not make a reservation.</p>
-    {generated && <Card className="border-[#dce4e7] bg-white p-5"><p className="font-semibold">How this plan fits</p><p className="mt-2 text-sm leading-6 text-muted-foreground">{generated.summary}</p><h2 className="mt-4 font-semibold">Review before confirming</h2><ul className="mt-2 list-disc space-y-2 pl-5 text-sm leading-6 text-muted-foreground">{generated.reviewNotes.map((note, i) => <li key={i}>{note}</li>)}</ul></Card>}
-    {(generated?.days ?? days).map((day) => <Card key={day.day} className="overflow-hidden border-[#dce4e7] bg-white shadow-sm">
+    <p className="text-xs text-muted-foreground">{generated?"AI draft":"Sample itinerary"} · Tokyo time · JPY (Japanese yen) · Estimates, not bookings</p>
+    <details className="rounded-xl border border-[#dce4e7] bg-white px-4 py-2"><summary className="min-h-11 cursor-pointer py-3 text-sm font-medium">{generated?`Plan summary & review notes (${generated.reviewNotes.length})`:"About this sample"}</summary>
+      {generated&&<><p className="mt-2 text-sm leading-6 text-muted-foreground">{generated.summary}</p><ul className="mt-3 list-disc space-y-2 pl-5 text-sm leading-6 text-muted-foreground">{generated.reviewNotes.map((note,i)=><li key={i}>{note.replace(/\s*\(custom-[a-f0-9-]{36}\)/gi,"")}</li>)}</ul></>}
+      <p className="my-3 text-xs leading-5 text-muted-foreground">{generated?`DeepSeek${generatedAt?` · ${evidenceTime(generatedAt)}`:" · Date unavailable"}`:"Team-authored example"}. Hours, tickets and full-day costs need checking. <a href="/data-use" className="underline">Data &amp; sources</a></p>
+    </details>
+    {generated?.reviewNotes.filter(note=>/not scheduled|omitt|cannot fit|outside (?:the|our|daily)|conflicts? with/i.test(note)).slice(0,2).map((note,i)=><p key={i} className="rounded-xl bg-[#fff5ed] px-4 py-3 text-sm text-[#a44832]">{note.replace(/\s*\(custom-[a-f0-9-]{36}\)/gi,"")}</p>)}
+    {(generated?.days ?? days).map((day) => {const stops=adjustWalking(day.day,day.stops,walkingMode),route=buildDailyRoute(day.day,stops);return <Card key={day.day} className="overflow-hidden border-[#dce4e7] bg-white shadow-sm">
       <div className="grid sm:grid-cols-[88px_1fr]">
         <div className="flex items-center justify-between bg-[#17384d] p-5 text-white sm:flex-col sm:items-start sm:justify-start sm:gap-2"><span className="text-sm font-semibold tracking-[0.16em] text-white/70">DAY</span><span className="text-4xl font-semibold">{day.day}</span></div>
         <div className="min-w-0 p-5 sm:p-6">
           <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-start"><div><h2 className="text-xl font-semibold">{day.title}</h2><p className="mt-1 flex items-center gap-1 text-sm text-muted-foreground"><MapPin className="h-3.5 w-3.5" />{day.area}</p></div><Badge variant="outline" className="w-fit whitespace-normal border-[#c9d7db]">{walkingMode === "reduced" ? "Less walking · More seated breaks" : day.note}</Badge></div>
-          <DailyRouteMap day={day.day} stops={adjustWalking(day.day, day.stops, walkingMode)} />
+          <div id={`day-${day.day}-map`} className="scroll-mt-20"><DailyRouteMap day={day.day} stops={stops} selected={selected[day.day]?.number} focusVersion={selected[day.day]?.version} onSelect={number=>select(day.day,number,true)}/></div>
           <ol className="mt-5 space-y-3" aria-label={`Day ${day.day} schedule`}>
-            {adjustWalking(day.day, day.stops, walkingMode).map((stop) => <li key={`${stop.time}-${stop.title}`} className={`rounded-2xl border p-4 ${stop.meal ? "border-[#f2c6bb] bg-[#fff5f1]" : "border-transparent bg-[#f3f6f6]"}`}>
-              <div className="flex flex-wrap items-center justify-between gap-2"><span className="text-sm font-semibold tabular-nums text-[#315b7d]">{stop.time}</span>{stop.meal && <span className="flex items-center gap-1.5 text-sm font-semibold text-[#b74d38]"><Utensils className="h-4 w-4" />{stop.meal}</span>}</div>
+            {stops.map((stop,index) => {const point=route[index],previous=route[index-1],walking=previous&&directionsUrl(previous,point,"walking"),transit=previous&&directionsUrl(previous,point,"transit");return <li id={`day-${day.day}-stop-${index+1}`} key={`${stop.time}-${stop.title}`} className={`scroll-mt-20 rounded-2xl border p-4 ${selected[day.day]?.number===index+1?"ring-2 ring-[#315b7d]":""} ${stop.meal ? "border-[#f2c6bb] bg-[#fff5f1]" : "border-transparent bg-[#f3f6f6]"}`}>
+              <div className="flex flex-wrap items-center justify-between gap-2"><div className="flex items-center gap-3"><button type="button" disabled={!point.location} onClick={()=>select(day.day,index+1)} aria-label={`Show activity ${index+1} on Day ${day.day} map`} className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-[#17384d] font-semibold text-white disabled:opacity-50">{index+1}</button><span className="text-sm font-semibold tabular-nums text-[#315b7d]">{stop.time}</span></div>{stop.meal && <span className="flex items-center gap-1.5 text-sm font-semibold text-[#b74d38]"><Utensils className="h-4 w-4" />{stop.meal}</span>}</div>
               <h3 className="mt-2 text-base font-semibold">{stop.title}</h3><p className="mt-1 text-sm leading-6 text-muted-foreground">{stop.detail}</p>
-              {stop.cost && <p className="mt-2 text-sm font-medium text-[#17384d]">Estimated meal budget: {stop.cost}</p>}
-              {stop.meal && (day.day === "04" && stop.meal === "Dinner" ? <>
-                {conflictChoice !== "exception" && <RestaurantOptions key="casual" day={day.day} meal={stop.meal} budget="mid" area="Ginza" label="Casual sushi candidates" />}
-                {conflictChoice !== "alternative" && <RestaurantOptions key="premium" day={day.day} meal={stop.meal} budget="premium" area="Ginza" label="Premium sushi candidates" />}
-              </> : <RestaurantOptions day={day.day} meal={stop.meal} budget={budget} area={stop.title} />)}
-            </li>)}
+              {(!point.location||point.approximate)&&<p className="mt-2 text-xs text-muted-foreground">{point.location?`≈ ${point.location.name}`:"Location unconfirmed · not mapped"}</p>}
+              {walking&&transit&&<div className="mt-2 flex flex-wrap gap-3 text-xs text-[#315b7d]"><a href={walking} target="_blank" rel="noopener noreferrer" className="inline-flex min-h-11 items-center underline">{index} → {index+1}: walking directions</a><a href={transit} target="_blank" rel="noopener noreferrer" className="inline-flex min-h-11 items-center underline">Public transport directions</a></div>}
+              {stop.cost && <p className="mt-2 text-sm font-medium text-[#17384d]">Est. {stop.cost.replace(/¥/g,"JPY ")}</p>}
+              <StopFactSources title={stop.title} locationId={stop.locationId} meal={stop.meal} generated={!!generated} access={access} customActivityId={"customActivityId" in stop?stop.customActivityId as string:undefined} />
+              {stop.meal&&<RestaurantOptions day={day.day} meal={stop.meal} budget={day.day==="04"&&stop.meal==="Dinner"?(conflictChoice==="exception"?"premium":conflictChoice==="optional"?"flex":"mid"):budget} area={stop.title} access={access}/>}
+            </li>;})}
           </ol>
-          <p className="mt-4 flex items-center gap-2 text-sm text-[#315b7d]"><Heart className="h-4 w-4 shrink-0" />Priority interests: {day.people}</p>
+          <details className="mt-5 rounded-xl border border-[#c9d7db] p-3"><summary className="min-h-11 cursor-pointer py-2 text-sm font-semibold">Check travel distances &amp; schedule gaps</summary><RouteCheckPanel day={day.day} stops={stops} access={access}/></details>
         </div>
       </div>
-    </Card>)}
+    </Card>;})}
   </div>;
 }

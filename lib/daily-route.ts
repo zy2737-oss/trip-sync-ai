@@ -19,7 +19,7 @@ export const routeLocations = {
   shinjuku: { name: "Shinjuku area", lat: 35.6881082, lng: 139.6966251, area: true, aliases: ["shinjuku"] },
 } as const;
 export type LocationId = keyof typeof routeLocations;
-export type RouteStopInput = { time: string; title: string; detail: string; meal?: "Lunch" | "Dinner"; locationId?: LocationId };
+export type RouteStopInput = { time: string; title: string; detail: string; meal?: "Lunch" | "Dinner"; locationId?: LocationId; customActivityId?:string };
 export type RouteStop = { number: number; time: string; title: string; locationId?: LocationId; location?: typeof routeLocations[LocationId]; approximate: boolean };
 const mealAreas: Record<string, [LocationId, LocationId]> = { "01": ["asakusa", "ueno"], "02": ["harajuku", "shibuya"], "03": ["azabudai", "roppongi"], "04": ["tsukiji", "ginza"], "05": ["shimokitazawa", "shinjuku"] };
 const normalize = (s: string) => s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
@@ -27,6 +27,7 @@ const normalize = (s: string) => s.normalize("NFD").replace(/[\u0300-\u036f]/g, 
 export function buildDailyRoute(day: string, stops: RouteStopInput[]): RouteStop[] {
   let previous: LocationId | undefined;
   return stops.map((stop, i) => {
+    if(stop.customActivityId){previous=undefined;return {number:i+1,time:stop.time,title:stop.title,approximate:true};}
     const title = normalize(stop.title);
     const found = (Object.keys(routeLocations) as LocationId[]).find(id => routeLocations[id].aliases.some(a => title.includes(a)));
     let id = stop.locationId ?? found;
