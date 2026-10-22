@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useTripGroup } from "@/hooks/use-trip-group";
 import {
   ArrowLeft,
   Check,
@@ -39,28 +40,10 @@ type Place = {
 };
 
 type PlaceChoice = "must" | "interested" | "skip";
-type Member = { id: string; name: string; initials: string; color: string };
-type MemberResponse = { answers: Record<string, string>; placeChoices: Record<string, PlaceChoice>; completed: boolean; updatedAt: string };
-type TripGroup = { code: string; name: string; createdAt: string };
-
-const STORAGE_KEY = "tripsync.local.v1";
-const memberColors = ["bg-[#de5b48]", "bg-[#315b7d]", "bg-[#7c5d91]", "bg-[#3e8068]", "bg-[#b07d2b]", "bg-[#4a6fa5]", "bg-[#8a5a44]", "bg-[#5b8a72]"];
+const memberColors = ["bg-[#de5b48]", "bg-[#315b7d]", "bg-[#7c5d91]", "bg-[#3e8068]", "bg-[#b07d2b]", "bg-[#4a6fa5]"];
 const defaultAnswers: Record<string, string> = { pace: "balanced", walking: "moderate", budget: "mid", food: "mixed", together: "mostly" };
-const defaultPlaceChoices: Record<string, PlaceChoice> = { sensoji: "interested", teamlab: "must", meiji: "interested", museum: "skip", shibuya: "must", tsukiji: "interested" };
+const defaultPlaceChoices: Record<string, PlaceChoice> = { sensoji: "interested", teamlab: "interested", meiji: "interested", museum: "interested", shibuya: "interested", tsukiji: "interested" };
 
-function makeCode() {
-  const chars = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
-  let suffix = "";
-  for (let i = 0; i < 4; i++) suffix += chars[Math.floor(Math.random() * chars.length)];
-  return `TS-${suffix}`;
-}
-function makeId() { return Math.random().toString(36).slice(2, 10); }
-function initialsOf(name: string) {
-  const parts = name.trim().split(/\s+/).filter(Boolean);
-  if (!parts.length) return "??";
-  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
-  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
-}
 function mostCommon(values: string[], fallback: string) {
   if (!values.length) return fallback;
   const counts = new Map<string, number>();
@@ -149,32 +132,62 @@ const answerLabels: Record<string, string> = {
 
 export default function Home() {
   const [screen, setScreen] = useState<Screen>("lobby");
+  useEffect(()=>{window.scrollTo(0,0);},[screen]);
   const [questionIndex, setQuestionIndex] = useState(0);
   const [answers, setAnswers] = useState<Record<string, string>>(defaultAnswers);
   const [places, setPlaces] = useState<Place[]>(fallbackPlaces);
   const [placeSource, setPlaceSource] = useState<"google_places" | "demo">("demo");
   const [refreshing, setRefreshing] = useState(false);
   const [placeChoices, setPlaceChoices] = useState<Record<string, PlaceChoice>>(defaultPlaceChoices);
-  const [conflictChoice, setConflictChoice] = useState("optional");
+  const [conflictChoice, setConflictChoice] = useState("alternative");
   const [walkingMode, setWalkingMode] = useState<WalkingMode>("standard");
   const [generatedItinerary, setGeneratedItinerary] = useState<AIItinerary>();
   const [generating, setGenerating] = useState(false);
   const [generationError, setGenerationError] = useState("");
-  // --- Local multiplayer (stored only in this browser) ---
-  const [group, setGroup] = useState<TripGroup | null>(null);
-  const [members, setMembers] = useState<Member[]>([]);
-  const [responses, setResponses] = useState<Record<string, MemberResponse>>({});
-  const [currentMemberId, setCurrentMemberId] = useState<string | null>(null);
-  const [hydrated, setHydrated] = useState(false);
-  const [nicknameInput, setNicknameInput] = useState("");
-  const [groupNameInput, setGroupNameInput] = useState("Japan graduation trip");
-  const [joinCodeInput, setJoinCodeInput] = useState("");
-  const [joinNameInput, setJoinNameInput] = useState("");
-  const [newMemberInput, setNewMemberInput] = useState("");
-  const [lobbyError, setLobbyError] = useState("");
+  const shared = useTripGroup();
+  const group = shared.snapshot?.group ?? null;
+  const responses = shared.snapshot?.responses ?? {};
+  const members = (shared.snapshot?.members ?? []).map((m,i) => ({...m, initials:m.name.slice(0,2).toUpperCase(),color:memberColors[i%memberColors.length]}));
+  const currentMemberId = shared.snapshot?.currentMemberId ?? null;
+  const currentMember = members.find(m=>m.id===currentMemberId) ?? null;
+  const isOrganizer = currentMember?.role === "organizer";
+  const completedMembers = members.filter(m=>m.completed);
+  const [nicknameInput,setNicknameInput]=useState("");
+  const [groupNameInput,setGroupNameInput]=useState("Japan graduation trip");
+  const [joinCodeInput,setJoinCodeInput]=useState("");
+  const [joinNameInput,setJoinNameInput]=useState("");
+  const [copyMessage,setCopyMessage]=useState("");
+  const [inviteUrl,setInviteUrl]=useState("");
+  const loadedMember=useRef<string|null>(null);
+  const loadedPlan=useRef<string>("");
+  useEffect(()=>{if(shared.invite)setJoinCodeInput(shared.invite);},[shared.invite]);
+  useEffect(()=>{
+    if(!shared.snapshot)return;
+    if(loadedMember.current!==shared.snapshot.currentMemberId){
+      const own=shared.snapshot.responses[shared.snapshot.currentMemberId];
+      setAnswers(own?{...defaultAnswers,...own.answers}:defaultAnswers);
+      setPlaceChoices(own?{...defaultPlaceChoices,...own.placeChoices}:defaultPlaceChoices);
+      loadedMember.current=shared.snapshot.currentMemberId;
+    }
+    setGeneratedItinerary(shared.snapshot.itinerary);
+    const planKey=`${shared.snapshot.group.code}:${shared.snapshot.planRevision}:${shared.snapshot.conflictChoice}`;
+    if(loadedPlan.current!==planKey){setConflictChoice(shared.snapshot.conflictChoice);loadedPlan.current=planKey;}
+    setInviteUrl(shared.invitation());
+  },[shared.snapshot]);
+  const planStale=!!shared.snapshot?.itinerary && shared.snapshot.planRevision!==group?.revision;
+  async function copyLink(privateLink=false){
+    try{await navigator.clipboard.writeText(privateLink?shared.recovery():shared.invitation());setCopyMessage(privateLink?"Private recovery link copied. Keep it secret — it grants your access.":"Invitation copied. Send it to your friends.");}
+    catch{setCopyMessage("Clipboard unavailable. Select and copy the invitation below.");}
+  }
+  function leaveGroup(){if(window.confirm("Leave this device session? Copy your private recovery link first if you want to return.")){shared.leave();loadedMember.current=null;setScreen("lobby");setInviteUrl("");setGeneratedItinerary(undefined);}}
+  async function removeGroup(){if(window.confirm("Delete this group, all profiles and its saved itinerary for everyone? This cannot be undone.")){if(await shared.remove()){loadedMember.current=null;setScreen("lobby");setInviteUrl("");setGeneratedItinerary(undefined);}}}
+  async function handleCreateGroup(){await shared.enter("create",groupNameInput.trim()||"Our trip",nicknameInput);}
+  async function handleJoinGroup(){await shared.enter("join",joinCodeInput.trim().toUpperCase(),joinNameInput);}
+  async function markCurrentCompleteAndShow(target:Screen){
+    const saved=await shared.save({answers:answers as import("@/lib/group-contract").Profile["answers"],placeChoices,completed:true});
+    if(saved)setScreen(target);
+  }
 
-  const currentMember = members.find((m) => m.id === currentMemberId) ?? null;
-  const completedMembers = members.filter((m) => responses[m.id]?.completed);
   const aggregatedAnswers = useMemo<Record<string, string>>(() => {
     const done = completedMembers.map((m) => responses[m.id]).filter(Boolean);
     if (!done.length) return answers;
@@ -183,7 +196,7 @@ export default function Home() {
       walking: mostRestrictive(done.map((r) => r.answers.walking), ["light", "moderate", "active"], "moderate"),
       budget: mostRestrictive(done.map((r) => r.answers.budget), ["value", "mid", "flex"], "mid"),
       food: mostCommon(done.map((r) => r.answers.food), "mixed"),
-      together: mostCommon(done.map((r) => r.answers.together), "mostly"),
+      together: mostRestrictive(done.map((r) => r.answers.together), ["together", "mostly", "flexible"], "mostly"),
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [members, responses]);
@@ -195,123 +208,13 @@ export default function Home() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [members, responses]);
 
-  // Load local data once
-  useEffect(() => {
-    try {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      if (raw) {
-        const data = JSON.parse(raw) as { group: TripGroup | null; members: Member[]; responses: Record<string, MemberResponse>; currentMemberId: string | null };
-        // eslint-disable-next-line react-hooks/set-state-in-effect -- one-time hydration from localStorage on mount
-        setGroup(data.group ?? null);
-        setMembers(data.members ?? []);
-        setResponses(data.responses ?? {});
-        setCurrentMemberId(data.currentMemberId ?? null);
-        const me = (data.members ?? []).find((m) => m.id === data.currentMemberId);
-        const mine = me ? data.responses?.[me.id] : undefined;
-        if (mine) { setAnswers({ ...defaultAnswers, ...mine.answers }); setPlaceChoices({ ...defaultPlaceChoices, ...mine.placeChoices }); }
-      }
-    } catch { /* ignore corrupted local data */ }
-    setHydrated(true);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  // Persist local data
-  useEffect(() => {
-    if (!hydrated) return;
-    try { localStorage.setItem(STORAGE_KEY, JSON.stringify({ group, members, responses, currentMemberId })); } catch { /* storage full/blocked */ }
-  }, [hydrated, group, members, responses, currentMemberId]);
-
-  // Keep other open tabs of this browser in sync (local prototype only)
-  useEffect(() => {
-    const onStorage = (event: StorageEvent) => {
-      if (event.key !== STORAGE_KEY || !event.newValue) return;
-      try {
-        const data = JSON.parse(event.newValue) as { group: TripGroup | null; members: Member[]; responses: Record<string, MemberResponse>; currentMemberId: string | null };
-        // eslint-disable-next-line react-hooks/set-state-in-effect -- sync state from another tab's localStorage write
-        setGroup(data.group ?? null);
-        setMembers(data.members ?? []);
-        setResponses(data.responses ?? {});
-      } catch { /* ignore */ }
-    };
-    window.addEventListener("storage", onStorage);
-    return () => window.removeEventListener("storage", onStorage);
-  }, []);
-
-  // Save current member's draft automatically
-  useEffect(() => {
-    if (!hydrated || !currentMemberId) return;
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- keep per-member draft in sync while answering
-    setResponses((prev) => {
-      const existing = prev[currentMemberId];
-      const next: MemberResponse = { answers, placeChoices, completed: existing?.completed ?? false, updatedAt: new Date().toISOString() };
-      if (existing && JSON.stringify(existing.answers) === JSON.stringify(answers) && JSON.stringify(existing.placeChoices) === JSON.stringify(placeChoices)) return prev;
-      return { ...prev, [currentMemberId]: next };
-    });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [answers, placeChoices, currentMemberId, hydrated]);
-
-  function switchToMember(member: Member) {
-    setCurrentMemberId(member.id);
-    const mine = responses[member.id];
-    setAnswers(mine ? { ...defaultAnswers, ...mine.answers } : defaultAnswers);
-    setPlaceChoices(mine ? { ...defaultPlaceChoices, ...mine.placeChoices } : defaultPlaceChoices);
-    setQuestionIndex(0);
-  }
-  function addMember(name: string): Member | null {
-    const trimmed = name.trim();
-    if (!trimmed) { setLobbyError("Please enter a nickname."); return null; }
-    if (members.some((m) => m.name.toLowerCase() === trimmed.toLowerCase())) { setLobbyError("That nickname is already in this group. Switch to them from the member list, or pick another name."); return null; }
-    const member: Member = { id: makeId(), name: trimmed, initials: initialsOf(trimmed), color: memberColors[members.length % memberColors.length] };
-    setMembers((prev) => [...prev, member]);
-    setLobbyError("");
-    return member;
-  }
-  function handleCreateGroup() {
-    const name = nicknameInput.trim();
-    if (!name) { setLobbyError("Enter your nickname first, so teammates know who answered."); return; }
-    const newGroup: TripGroup = { code: makeCode(), name: groupNameInput.trim() || "Our trip", createdAt: new Date().toISOString() };
-    const member: Member = { id: makeId(), name, initials: initialsOf(name), color: memberColors[0] };
-    setGroup(newGroup); setMembers([member]); setResponses({}); setCurrentMemberId(member.id);
-    setAnswers(defaultAnswers); setPlaceChoices(defaultPlaceChoices); setNicknameInput(""); setLobbyError("");
-  }
-  function handleJoinGroup() {
-    const code = joinCodeInput.trim().toUpperCase();
-    const name = joinNameInput.trim();
-    if (!code || !name) { setLobbyError("Enter both the invite code and your nickname."); return; }
-    if (!group) { setLobbyError("No group found in this browser yet. Ask the creator to create it on this device first — cross-device join comes with the database version."); return; }
-    if (group.code !== code) { setLobbyError(`Invite code not found. This browser's group code is ${group.code}.`); return; }
-    const member = addMember(name);
-    if (member) { setCurrentMemberId(member.id); setAnswers(defaultAnswers); setPlaceChoices(defaultPlaceChoices); setJoinNameInput(""); }
-  }
-  function handleAddTraveler() {
-    const member = addMember(newMemberInput);
-    if (member) { setCurrentMemberId(member.id); setAnswers(defaultAnswers); setPlaceChoices(defaultPlaceChoices); setNewMemberInput(""); setScreen("quiz"); setQuestionIndex(0); }
-  }
-  function markCurrentCompleteAndShow(target: Screen) {
-    if (currentMemberId) {
-      setResponses((prev) => ({ ...prev, [currentMemberId]: { answers, placeChoices, completed: true, updatedAt: new Date().toISOString() } }));
-    }
-    setScreen(target);
-  }
-  function resetLocalDemo() {
-    try { localStorage.removeItem(STORAGE_KEY); } catch { /* ignore */ }
-    setGroup(null); setMembers([]); setResponses({}); setCurrentMemberId(null); setAnswers(defaultAnswers); setPlaceChoices(defaultPlaceChoices); setScreen("lobby"); setLobbyError("");
-  }
-
   async function generateItinerary() {
-    setGenerating(true); setGenerationError("");
+    if(!group)return;
+    setGenerating(true);setGenerationError("");
     try {
-      const allMust = completedMembers.flatMap((m) => { const r = responses[m.id]; if (!r) return []; return places.filter((p) => r.placeChoices[p.id] === "must").map((p) => p.name); });
-      const mustForRequest = [...new Set(allMust.length ? allMust : places.filter(place => placeChoices[place.id] === "must").map(place => place.name))];
-      const response = await fetch("/api/itinerary", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ answers: aggregatedAnswers, mustVisits: mustForRequest, conflictChoice }),
-      });
-      const data = await response.json() as { itinerary?: AIItinerary; message?: string };
-      if (!response.ok || !data.itinerary) throw new Error(data.message ?? "Could not generate this itinerary.");
-      setGeneratedItinerary(data.itinerary); setWalkingMode(aggregatedAnswers.walking === "light" ? "reduced" : "standard"); setScreen("itinerary");
-    } catch (error) { setGenerationError(error instanceof Error ? error.message : "Generation failed. Try again."); }
-    finally { setGenerating(false); }
+      const saved=await shared.update("itinerary",{conflictChoice,expectedRevision:group.revision});
+      if(saved?.itinerary){setGeneratedItinerary(saved.itinerary);setWalkingMode(aggregatedAnswers.walking==="light"?"reduced":"standard");setScreen("itinerary");}
+    } finally {setGenerating(false);}
   }
 
   async function refreshPlaces() {
@@ -357,6 +260,8 @@ export default function Home() {
   return (
     <main className="min-h-screen bg-background text-foreground">
       <AppHeader screen={screen} onHome={() => setScreen("lobby")} />
+      {shared.error && <div role="alert" className="mx-auto mt-4 max-w-5xl rounded-xl bg-[#fff0ec] p-4 text-sm text-[#b64735]">{shared.error} <button className="ml-3 underline" onClick={()=>shared.refresh()}>Retry</button>{!group && shared.session && <button className="ml-3 underline" onClick={()=>shared.leave()}>Forget this device session</button>}</div>}
+      {shared.hydrated && shared.session && !group && <p role="status" className="mx-auto max-w-5xl p-4">Connecting to your saved group…</p>}
 
       {screen === "lobby" && (
         <section className="mx-auto grid w-full max-w-6xl gap-7 px-4 pb-16 pt-6 sm:px-7 lg:grid-cols-[1.4fr_0.8fr] lg:pt-10">
@@ -365,10 +270,10 @@ export default function Home() {
               <img src="https://thumb.wikimedia.org/wikipedia/commons/thumb/9/94/Shibuya_Crossing_in_Tokyo.jpg/960px-Shibuya_Crossing_in_Tokyo.jpg" alt="Night view of Shibuya Crossing in Tokyo" className="absolute inset-0 h-full w-full object-cover opacity-55" />
               <div className="absolute inset-0 bg-gradient-to-t from-[#102b3c] via-[#102b3c]/65 to-transparent" />
               <div className="relative flex min-h-[500px] flex-col justify-end p-6 sm:p-9">
-                <div className="mb-auto flex items-center justify-between"><Badge className="border-white/20 bg-white/12 px-3 py-1 text-white backdrop-blur">TRIP · TOKYO</Badge><span className="rounded-full border border-white/20 bg-black/15 px-3 py-1 text-sm backdrop-blur">May 20–24</span></div>
+                <div className="mb-auto flex items-center justify-between"><Badge className="border-white/20 bg-white/12 px-3 py-1 text-white backdrop-blur">TRIP · TOKYO</Badge><span className="rounded-full border border-white/20 bg-black/15 px-3 py-1 text-sm backdrop-blur">5-day prototype</span></div>
                 <p className="mb-2 text-sm font-semibold uppercase tracking-[0.2em] text-[#ffd0c5]">{group ? group.name : "Japan graduation trip"}</p>
                 <h1 className="max-w-xl text-4xl font-semibold leading-[1.04] tracking-[-0.04em] sm:text-6xl">Build the trip everyone wants to take.</h1>
-                <p className="mt-4 max-w-xl text-base leading-7 text-white/78 sm:text-lg">Everyone answers for themselves. TripSync combines real profiles into a fair itinerary — no account or API key needed for this local prototype.</p>
+                <p className="mt-4 max-w-xl text-base leading-7 text-white/78 sm:text-lg">Everyone answers for themselves. TripSync combines real profiles into a fair itinerary — each friend joins from their own device. No registration needed.</p>
                 {group && currentMember ? (
                   <div className="mt-7 flex flex-wrap items-center gap-3"><Button size="lg" className="h-12 rounded-full bg-[#f26a52] px-6 text-white hover:bg-[#db5843]" onClick={() => { setQuestionIndex(0); setScreen("quiz"); }}>Answer as {currentMember.name} <ChevronRight className="ml-1 h-4 w-4" /></Button><Button size="lg" variant="outline" className="h-12 rounded-full border-white/30 bg-white/8 px-6 text-white hover:bg-white/16 hover:text-white" onClick={() => setScreen("group")}>View group summary</Button><span className="rounded-full bg-white/15 px-3 py-1 text-sm">Invite code: <strong>{group.code}</strong></span></div>
                 ) : (
@@ -388,18 +293,18 @@ export default function Home() {
                   <Input id="group-name" value={groupNameInput} onChange={(e) => setGroupNameInput(e.target.value)} placeholder="Japan graduation trip" />
                   <Label htmlFor="your-name">Your nickname</Label>
                   <Input id="your-name" value={nicknameInput} onChange={(e) => setNicknameInput(e.target.value)} placeholder="e.g. Emma" />
-                  <Button className="h-11 w-full rounded-full bg-[#17384d] hover:bg-[#0f2c3f]" onClick={handleCreateGroup}>Create group</Button>
+                  <Button className="h-11 w-full rounded-full bg-[#17384d] hover:bg-[#0f2c3f]" disabled={shared.busy || !shared.hydrated || !!shared.session} onClick={handleCreateGroup}>Create group</Button>
                 </div>
                 <div className="my-5 flex items-center gap-3 text-xs text-muted-foreground"><span className="h-px flex-1 bg-[#e2e9eb]" />OR JOIN WITH A CODE<span className="h-px flex-1 bg-[#e2e9eb]" /></div>
                 <div className="space-y-3">
                   <Label htmlFor="join-code">Invite code</Label>
-                  <Input id="join-code" value={joinCodeInput} onChange={(e) => setJoinCodeInput(e.target.value)} placeholder="TS-XXXX" />
+                  <Input id="join-code" value={joinCodeInput} onChange={(e) => setJoinCodeInput(e.target.value)} placeholder="Paste the invite code or open your invitation" />
                   <Label htmlFor="join-name">Your nickname</Label>
                   <Input id="join-name" value={joinNameInput} onChange={(e) => setJoinNameInput(e.target.value)} placeholder="e.g. Alex" />
-                  <Button variant="outline" className="h-11 w-full rounded-full" onClick={handleJoinGroup}>Join group</Button>
+                  <Button variant="outline" className="h-11 w-full rounded-full" disabled={shared.busy || !shared.hydrated || !!shared.session} onClick={handleJoinGroup}>Join group</Button>
                 </div>
-                {lobbyError && <p role="alert" className="mt-4 rounded-xl bg-[#fff0ec] p-3 text-sm text-[#b64735]">{lobbyError}</p>}
-                <p className="mt-4 text-xs leading-5 text-muted-foreground">Local prototype: groups live only in this browser. On this device you can add several travelers and switch between them to demo the flow. Cross-device sync arrives with the database version.</p>
+
+                <p className="mt-4 text-xs leading-5 text-muted-foreground">Profiles are stored in shared cloud storage. Submitted preferences are visible to the organizer. Keep invitations within your group. This browser remembers your private access credential; clearing storage removes access unless you saved your private recovery link.</p>
               </Card>
             ) : (
               <Card className="border-[#dce4e7] bg-white p-5 shadow-sm sm:p-6">
@@ -410,9 +315,9 @@ export default function Home() {
                     const done = !!responses[member.id]?.completed;
                     const isYou = member.id === currentMemberId;
                     return (
-                      <button key={member.id} type="button" onClick={() => switchToMember(member)} className={`flex w-full items-center gap-3 rounded-2xl border p-3 text-left transition ${isYou ? "border-[#ef6a53] bg-[#fff4f0]" : "border-[#e2e9eb] hover:border-[#9eb1b8]"}`}>
+                      <button key={member.id} type="button" disabled={!isYou} onClick={() => {setQuestionIndex(0);setScreen("quiz");}} className={`flex w-full items-center gap-3 rounded-2xl border p-3 text-left transition ${isYou ? "border-[#ef6a53] bg-[#fff4f0]" : "border-[#e2e9eb] hover:border-[#9eb1b8]"}`}>
                         <span className={`grid h-10 w-10 shrink-0 place-items-center rounded-full text-xs font-semibold text-white ${member.color}`}>{member.initials}</span>
-                        <span className="min-w-0 flex-1"><span className="block font-medium">{member.name}{isYou ? " (you)" : ""}</span><span className="block text-sm text-muted-foreground">{done ? "Profile ready — tap to edit" : "Quiz waiting — tap to answer as them"}</span></span>
+                        <span className="min-w-0 flex-1"><span className="block font-medium">{member.name}{isYou ? " (you)" : ""}</span><span className="block text-sm text-muted-foreground">{done ? (isYou ? "Submitted — tap to edit yours" : "Profile submitted") : (isYou ? "Tap to fill in your questionnaire" : "Waiting for their submission")}</span></span>
                         {done ? <span className="grid h-7 w-7 place-items-center rounded-full bg-[#e3f3ed] text-[#2d775f]"><Check className="h-4 w-4" /></span> : <Badge variant="outline" className="border-[#f2b5a9] text-[#c84b37]">Waiting</Badge>}
                       </button>
                     );
@@ -420,10 +325,16 @@ export default function Home() {
                   {!members.length && <p className="text-sm text-muted-foreground">Add the first traveler below.</p>}
                 </div>
                 <div className="mt-5 space-y-3 border-t pt-5">
-                  <Label htmlFor="new-member">Add another traveler (on this device)</Label>
-                  <div className="flex gap-2"><Input id="new-member" value={newMemberInput} onChange={(e) => setNewMemberInput(e.target.value)} placeholder="Teammate nickname" onKeyDown={(e) => { if (e.key === "Enter") handleAddTraveler(); }} /><Button className="shrink-0 rounded-full bg-[#17384d] hover:bg-[#0f2c3f]" onClick={handleAddTraveler}>Add &amp; answer</Button></div>
-                  {lobbyError && <p role="alert" className="rounded-xl bg-[#fff0ec] p-3 text-sm text-[#b64735]">{lobbyError}</p>}
-                  <button type="button" className="text-xs text-muted-foreground underline underline-offset-4 hover:underline" onClick={resetLocalDemo}>Reset local demo data</button>
+                  <Label htmlFor="invitation-link">Invite friends on their own devices</Label>
+                  <Input id="invitation-link" readOnly value={inviteUrl} onFocus={e=>e.target.select()} />
+                  <Button disabled={shared.busy} className="w-full rounded-full bg-[#17384d]" onClick={()=>copyLink()}>Copy invitation link</Button>
+                  <Button variant="outline" className="w-full rounded-full" onClick={()=>copyLink(true)}>Copy my private recovery link</Button>
+                  {copyMessage && <p role="status" className="text-sm text-[#315b7d]">{copyMessage}</p>}
+                  <p className="text-xs leading-5 text-muted-foreground">Only you can edit your answers. {isOrganizer?"You organize this trip and can generate its plan.":"The organizer reviews submitted preferences and generates the plan."} Progress refreshes every 8 seconds.</p>
+                  <Button variant="outline" className="w-full rounded-full" onClick={()=>shared.refresh()}>Refresh group</Button>
+                  {shared.snapshot?.itinerary && <Button className="w-full rounded-full bg-[#17384d]" onClick={()=>setScreen("itinerary")}>View shared itinerary</Button>}
+                  <button type="button" disabled={shared.busy} className="text-xs text-muted-foreground underline" onClick={leaveGroup}>Leave this device session</button>
+                  {isOrganizer && <button type="button" disabled={shared.busy} className="ml-4 text-xs text-[#b64735] underline" onClick={removeGroup}>Delete group &amp; saved data</button>}
                 </div>
               </Card>
             )}
@@ -462,27 +373,30 @@ export default function Home() {
 
       {screen === "profile" && (
         <section className="mx-auto w-full max-w-5xl px-4 pb-16 pt-8 sm:px-7 sm:pt-12"><div className="grid gap-6 lg:grid-cols-[1fr_0.85fr]">
-          <Card className="relative overflow-hidden border-0 bg-[#17384d] p-7 text-white shadow-[0_22px_70px_rgba(23,56,77,.2)] sm:p-10"><Sparkles className="absolute right-8 top-8 h-8 w-8 text-[#f5b6a9]" /><p className="text-sm font-semibold uppercase tracking-[0.18em] text-[#f5b6a9]">{currentMember ? `${currentMember.name}’s Travel DNA` : "Your Travel DNA"}</p><h1 className="mt-5 max-w-lg text-4xl font-semibold leading-[1.05] tracking-[-0.04em] sm:text-6xl">The Curious City Balancer</h1><p className="mt-5 max-w-xl text-base leading-7 text-white/75">You want iconic Tokyo moments without turning every day into a race. A thoughtful splurge, moderate walking, and time to notice the city suit you best.</p><div className="mt-9 flex flex-wrap gap-2">{Object.values(answers).map((answer) => <Badge key={answer} className="border-white/15 bg-white/10 px-3 py-1.5 text-white">{answerLabels[answer]}</Badge>)}</div></Card>
-          <div className="space-y-5"><Card className="border-[#dce4e7] bg-white p-6"><p className="text-sm font-semibold text-[#d9513f]">YOUR MUST-VISITS</p><div className="mt-4 space-y-3">{(mustVisits.length ? mustVisits : places.slice(0, 2)).map((place, index) => <div key={place.id} className="flex items-center gap-3 rounded-2xl bg-[#f4f7f7] p-3"><span className="grid h-8 w-8 place-items-center rounded-full bg-[#17384d] text-sm font-semibold text-white">{index + 1}</span><div><p className="font-medium">{place.name}</p><p className="text-sm text-muted-foreground">{place.area}</p></div></div>)}</div></Card><Button size="lg" className="h-13 w-full rounded-full bg-[#ef6a53] text-white hover:bg-[#dc5944]" onClick={() => markCurrentCompleteAndShow("group")}>Save my profile to the group</Button><button className="w-full text-center text-sm text-muted-foreground underline-offset-4 hover:underline" onClick={() => { setQuestionIndex(0); setScreen("quiz"); }}>Edit my answers</button></div>
+          <Card className="relative overflow-hidden border-0 bg-[#17384d] p-7 text-white shadow-[0_22px_70px_rgba(23,56,77,.2)] sm:p-10"><Sparkles className="absolute right-8 top-8 h-8 w-8 text-[#f5b6a9]" /><p className="text-sm font-semibold uppercase tracking-[0.18em] text-[#f5b6a9]">{currentMember ? `${currentMember.name}’s Travel DNA` : "Your Travel DNA"}</p><h1 className="mt-5 max-w-lg text-4xl font-semibold leading-[1.05] tracking-[-0.04em] sm:text-6xl">Your travel preferences</h1><p className="mt-5 max-w-xl text-base leading-7 text-white/75">Review the preferences below, then submit them for your organizer to include in the group plan.</p><div className="mt-9 flex flex-wrap gap-2">{Object.values(answers).map((answer) => <Badge key={answer} className="border-white/15 bg-white/10 px-3 py-1.5 text-white">{answerLabels[answer]}</Badge>)}</div></Card>
+          <div className="space-y-5"><Card className="border-[#dce4e7] bg-white p-6"><p className="text-sm font-semibold text-[#d9513f]">YOUR MUST-VISITS</p><div className="mt-4 space-y-3">{mustVisits.map((place, index) => <div key={place.id} className="flex items-center gap-3 rounded-2xl bg-[#f4f7f7] p-3"><span className="grid h-8 w-8 place-items-center rounded-full bg-[#17384d] text-sm font-semibold text-white">{index + 1}</span><div><p className="font-medium">{place.name}</p><p className="text-sm text-muted-foreground">{place.area}</p></div></div>)}</div></Card><Button size="lg" className="h-13 w-full rounded-full bg-[#ef6a53] text-white hover:bg-[#dc5944]" disabled={shared.busy} onClick={() => markCurrentCompleteAndShow("group")}>{shared.busy ? "Saving…" : "Submit my profile to the group"}</Button><button className="w-full text-center text-sm text-muted-foreground underline-offset-4 hover:underline" onClick={() => { setQuestionIndex(0); setScreen("quiz"); }}>Edit my answers</button></div>
         </div></section>
       )}
 
-      {screen === "group" && (
+      {screen === "group" && !isOrganizer && (
+        <section className="mx-auto max-w-3xl space-y-5 px-5 py-10"><h1 className="text-3xl font-semibold">Your group, on everyone’s device</h1><p>{currentMember?.completed?"Your profile is submitted.":"Submit your profile so the organizer can include you."} {completedMembers.length} of {members.length} travelers are ready.</p><p className="text-muted-foreground">Only the organizer sees everyone’s detailed preferences and generates the itinerary. Your answers stay editable on this device.</p><Button onClick={()=>{setQuestionIndex(0);setScreen("quiz");}}>Edit my answers</Button><Button variant="outline" className="ml-3" onClick={()=>setScreen("lobby")}>Group lobby</Button>{shared.snapshot?.itinerary && <Button className="ml-3" onClick={()=>setScreen("itinerary")}>View shared itinerary</Button>}</section>
+      )}
+      {screen === "group" && isOrganizer && (
         <section className="mx-auto w-full max-w-6xl px-4 pb-20 pt-7 sm:px-7 sm:pt-10">
           <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-end"><div><p className="text-sm font-semibold tracking-[0.16em] text-[#d9513f]">GROUP PROFILE</p><h1 className="mt-2 text-3xl font-semibold tracking-[-0.03em] sm:text-5xl">Your group agrees on more than you think.</h1></div><div className="flex -space-x-2">{members.map((member) => <span key={member.id} title={member.name} className={`grid h-10 w-10 place-items-center rounded-full border-2 border-background text-xs font-semibold text-white ${member.color}`}>{member.initials}</span>)}</div></div>
           <p className="mt-3 text-sm text-muted-foreground">{completedMembers.length} of {members.length} travelers have submitted. Summary below uses only submitted profiles{group ? ` · Group ${group.code}` : ""}.</p>
           <div className="mt-6 grid gap-5 lg:grid-cols-3"><MetricCard icon={<Heart className="h-5 w-5" />} label="Shared pace (majority)" value={answerLabels[aggregatedAnswers.pace] ?? aggregatedAnswers.pace} note={completedMembers.length ? `From ${completedMembers.length} submitted profile${completedMembers.length > 1 ? "s" : ""}` : "Waiting for answers"} /><MetricCard icon={<Footprints className="h-5 w-5" />} label="Walking limit (lowest wins)" value={answerLabels[aggregatedAnswers.walking] ?? aggregatedAnswers.walking} note="Plan around the most limited traveler" /><MetricCard icon={<CircleDollarSign className="h-5 w-5" />} label="Budget comfort (lowest wins)" value={answerLabels[aggregatedAnswers.budget] ?? aggregatedAnswers.budget} note="Protects the tightest budget" /></div>
           <div className="mt-6 grid gap-6 lg:grid-cols-[0.9fr_1.1fr]">
-            <Card className="border-[#dce4e7] bg-white p-6"><div className="flex items-center justify-between"><h2 className="text-xl font-semibold">Everyone gets a moment</h2><Badge className="bg-[#e3f3ed] text-[#23664f]">{completedMembers.length}/{members.length} covered</Badge></div><div className="mt-5 space-y-4">{completedMembers.length ? completedMembers.map((member) => { const r = responses[member.id]; const firstMust = r ? places.find((p) => r.placeChoices[p.id] === "must") : undefined; return <div key={member.id} className="flex gap-3"><span className={`mt-0.5 grid h-9 w-9 shrink-0 place-items-center rounded-full text-xs font-semibold text-white ${member.color}`}>{member.initials}</span><div><p className="font-medium">{firstMust?.name ?? "No must-visit picked yet"}</p><p className="text-sm text-muted-foreground">{member.name} · {r ? (answerLabels[r.answers.food] ?? "") : ""}</p></div></div>; }) : <p className="text-sm text-muted-foreground">No profiles submitted yet. Go back to the lobby and answer as at least one traveler.</p>}</div></Card>
+            <Card className="border-[#dce4e7] bg-white p-6"><div className="flex items-center justify-between"><h2 className="text-xl font-semibold">Everyone gets a moment</h2><Badge className="bg-[#e3f3ed] text-[#23664f]">{completedMembers.length}/{members.length} covered</Badge></div><div className="mt-5 space-y-4">{completedMembers.length ? completedMembers.map((member) => { const r = responses[member.id]; const firstMust = r ? places.find((p) => r.placeChoices[p.id as keyof typeof r.placeChoices] === "must") : undefined; return <div key={member.id} className="flex gap-3"><span className={`mt-0.5 grid h-9 w-9 shrink-0 place-items-center rounded-full text-xs font-semibold text-white ${member.color}`}>{member.initials}</span><div><p className="font-medium">{firstMust?.name ?? "No must-visit picked yet"}</p><p className="text-sm text-muted-foreground">{member.name} · {r ? (answerLabels[r.answers.food] ?? "") : ""}</p></div></div>; }) : <p className="text-sm text-muted-foreground">No profiles submitted yet. Go back to the lobby and answer as at least one traveler.</p>}</div></Card>
             {hasBudgetConflict ? (
-            <Card className="border-[#f0c7bd] bg-[#fff8f5] p-6"><div className="flex items-start gap-3"><span className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-[#f4d7cf] text-[#b64735]"><Utensils className="h-5 w-5" /></span><div><p className="text-sm font-semibold text-[#b64735]">1 DECISION NEEDED</p><h2 className="mt-1 text-xl font-semibold">Special dinner vs. daily budget</h2><p className="mt-2 text-sm leading-6 text-muted-foreground">Some travelers chose a tight daily budget while others want a splurge or food-led plan. Decide together how to handle the special dinner.</p></div></div><RadioGroup value={conflictChoice} onValueChange={setConflictChoice} className="mt-5 gap-3">{[["alternative", "Choose a lower-cost alternative", "Everyone stays together · budget protected"],["optional", "Make the dinner optional", "Those who want can splurge · others get a nearby casual option"],["exception", "Allow one budget exception", "Everyone joins · the tightest cap is relaxed for one evening"]].map(([value, title, description]) => <Label key={value} htmlFor={`conflict-${value}`} className={`flex cursor-pointer items-start gap-3 rounded-2xl border p-4 ${conflictChoice === value ? "border-[#ef6a53] bg-white" : "border-[#eadbd6] bg-white/55"}`}><RadioGroupItem id={`conflict-${value}`} value={value} className="mt-0.5 text-[#e75f48]" /><span><span className="block font-semibold">{title}</span><span className="mt-1 block text-sm font-normal text-muted-foreground">{description}</span></span></Label>)}</RadioGroup></Card>
+            <Card className="border-[#f0c7bd] bg-[#fff8f5] p-6"><div className="flex items-start gap-3"><span className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-[#f4d7cf] text-[#b64735]"><Utensils className="h-5 w-5" /></span><div><p className="text-sm font-semibold text-[#b64735]">1 DECISION NEEDED</p><h2 className="mt-1 text-xl font-semibold">Special dinner vs. daily budget</h2><p className="mt-2 text-sm leading-6 text-muted-foreground">Some travelers chose a tight daily budget while others want a splurge or food-led plan. Decide together how to handle the special dinner.</p></div></div><RadioGroup disabled={shared.busy} value={conflictChoice} onValueChange={setConflictChoice} className="mt-5 gap-3">{[["alternative", "Choose a lower-cost alternative", "Everyone stays together · budget protected"],["optional", "Make the dinner optional", "Those who want can splurge · others get a nearby casual option"],["exception", "Allow one budget exception", "Everyone joins · the tightest cap is relaxed for one evening"]].map(([value, title, description]) => <Label key={value} htmlFor={`conflict-${value}`} className={`flex cursor-pointer items-start gap-3 rounded-2xl border p-4 ${conflictChoice === value ? "border-[#ef6a53] bg-white" : "border-[#eadbd6] bg-white/55"}`}><RadioGroupItem id={`conflict-${value}`} value={value} className="mt-0.5 text-[#e75f48]" /><span><span className="block font-semibold">{title}</span><span className="mt-1 block text-sm font-normal text-muted-foreground">{description}</span></span></Label>)}</RadioGroup></Card>
             ) : (
             <Card className="border-[#b8d6cb] bg-[#eef7f2] p-6"><div className="flex items-start gap-3"><span className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-[#d7eadf] text-[#2d775f]"><Check className="h-5 w-5" /></span><div><p className="text-sm font-semibold text-[#2d775f]">NO DECISION NEEDED</p><h2 className="mt-1 text-xl font-semibold">No budget conflict detected</h2><p className="mt-2 text-sm leading-6 text-muted-foreground">{completedMembers.length ? "Submitted budgets and food styles can work together. You can still preview the sample itinerary." : "Submit at least one profile to check for conflicts."}</p></div></div></Card>
             )}
           </div>
           <Card className="mt-6 border-[#dce4e7] bg-white p-6"><h2 className="text-xl font-semibold">What each person chose</h2><p className="mt-1 text-sm text-muted-foreground">If the summary above looks unchanged, check here first — majority and lowest-limit rules can hide a single change.</p><div className="mt-5 space-y-3">{completedMembers.length ? completedMembers.map((member) => { const r = responses[member.id]; if (!r) return null; return <div key={member.id} className="flex flex-wrap items-center gap-2 rounded-2xl border border-[#e2e9eb] p-3"><span className={`grid h-9 w-9 shrink-0 place-items-center rounded-full text-xs font-semibold text-white ${member.color}`}>{member.initials}</span><span className="mr-1 font-medium">{member.name}</span>{Object.values(r.answers).map((value) => <Badge key={value} variant="secondary" className="px-2 py-1">{answerLabels[value] ?? value}</Badge>)}</div>; }) : <p className="text-sm text-muted-foreground">No submitted profiles yet.</p>}</div></Card>
-          <div className="mt-7 flex flex-col items-center justify-between gap-4 rounded-3xl bg-[#17384d] p-5 text-white sm:flex-row sm:p-6"><div><p className="font-semibold">Ready to generate your group draft.</p><p className="mt-1 text-sm text-white/65">Your choice will shape Day 4 before the final plan is generated.</p></div><Button size="lg" className="h-12 w-full rounded-full bg-[#ef6a53] px-7 hover:bg-[#dc5944] sm:w-auto" disabled={generating} onClick={generateItinerary}><Sparkles className="mr-2 h-4 w-4" /> {generating ? "Generating your trip…" : "Generate itinerary"}</Button></div>
-          <p className="mt-3 text-sm leading-6 text-muted-foreground">Local prototype: profiles are stored only in this browser. AI generation (when connected) sends the aggregated preferences to DeepSeek. <a href="/data-use" target="_blank" rel="noopener noreferrer" className="underline">Data use & terms</a></p>
+          <div className="mt-7 flex flex-col items-center justify-between gap-4 rounded-3xl bg-[#17384d] p-5 text-white sm:flex-row sm:p-6"><div><p className="font-semibold">Ready to generate your group draft.</p><p className="mt-1 text-sm text-white/65">Your choice will shape Day 4 before the final plan is generated.</p></div><Button size="lg" className="h-12 w-full rounded-full bg-[#ef6a53] px-7 hover:bg-[#dc5944] sm:w-auto" disabled={shared.busy || generating || !members.length || completedMembers.length !== members.length} onClick={generateItinerary}><Sparkles className="mr-2 h-4 w-4" /> {generating ? "Generating your trip…" : "Generate itinerary"}</Button></div>
+          <p className="mt-3 text-sm leading-6 text-muted-foreground">Shared profiles are saved in cloud storage. Generate is available when all joined travelers have submitted. DeepSeek receives preferences labeled Traveler 1, Traveler 2, etc., not your nicknames. <a href="/data-use" target="_blank" rel="noopener noreferrer" className="underline">Data use & terms</a></p>
           {generating && <p role="status" className="mt-3 text-sm text-[#315b7d]">Building five days with lunch, dinner, and low-walking alternatives. This may take up to a minute.</p>}
           {generationError && <p role="alert" className="mt-3 rounded-xl bg-[#fff0ec] p-4 text-sm text-[#b64735]">{generationError}</p>}
           <Button disabled={generating} variant="ghost" className="mt-3 rounded-full" onClick={() => { setGeneratedItinerary(undefined); setWalkingMode("standard"); setScreen("itinerary"); }}>Preview sample itinerary</Button>
@@ -491,13 +405,15 @@ export default function Home() {
 
       {screen === "itinerary" && (
         <section className="mx-auto w-full max-w-6xl px-4 pb-20 pt-7 sm:px-7 sm:pt-10">
-          <div className="flex flex-col gap-5 sm:flex-row sm:items-end sm:justify-between"><div><div className="flex items-center gap-2 text-sm font-semibold text-[#2f7a61]"><span className="h-2 w-2 rounded-full bg-[#3f9d7b]" /> READY TO REVIEW</div><h1 className="mt-2 text-3xl font-semibold tracking-[-0.03em] sm:text-5xl">Five days, four travelers, no one left out.</h1><p className="mt-3 max-w-2xl text-base leading-7 text-muted-foreground">{walkingMode === "reduced" ? "A gentler version with shorter visits, seated breaks, and ride-first transfers." : "Built around each traveler’s priority interests and your dinner decision. Review the walking pace below."}</p></div><Button variant="outline" className="rounded-full" onClick={() => setScreen("group")}><ArrowLeft className="mr-2 h-4 w-4" /> Review decisions</Button></div>
+          <div className="flex flex-col gap-5 sm:flex-row sm:items-end sm:justify-between"><div><div className="flex items-center gap-2 text-sm font-semibold text-[#2f7a61]"><span className="h-2 w-2 rounded-full bg-[#3f9d7b]" /> READY TO REVIEW</div><h1 className="mt-2 text-3xl font-semibold tracking-[-0.03em] sm:text-5xl">Your shared five-day Tokyo draft</h1><p className="mt-3 max-w-2xl text-base leading-7 text-muted-foreground">{walkingMode === "reduced" ? "A gentler version with shorter visits, seated breaks, and ride-first transfers." : "Built around each traveler’s priority interests and your dinner decision. Review the walking pace below."}</p></div><Button variant="outline" className="rounded-full" onClick={() => setScreen("group")}><ArrowLeft className="mr-2 h-4 w-4" /> Review decisions</Button></div>
+          {planStale && <p role="alert" className="mt-5 rounded-xl bg-[#fff0ec] p-4 text-[#b64735]">Preferences or membership changed after this draft. The organizer needs to generate a new version.</p>}
+          {shared.snapshot?.acceptedAt && generatedItinerary && <p role="status" className="mt-5 text-[#2f7a61]">This draft was accepted by the organizer.</p>}
           <div className="mt-8 grid gap-5 lg:grid-cols-[1fr_280px]">
             <div className="space-y-4">
               {walkingMode === "reduced" && <div role="status" className="rounded-2xl border border-[#b8d6cb] bg-[#eef7f2] p-4"><p className="flex items-center gap-2 font-semibold text-[#2f7a61]"><Footprints className="h-5 w-5" />Less-walking plan applied</p><p className="mt-2 text-sm leading-6 text-muted-foreground">All five days now include shorter browsing, more seated breaks, and ride-first transfers. Lunch, dinner, and your dinner decision stay in place. Actual steps depend on routes and venue layouts; taxis may add cost.</p></div>}
               <DailyItinerary conflictChoice={conflictChoice} budget={aggregatedAnswers.budget} walkingMode={walkingMode} generated={generatedItinerary} />
             </div>
-            <aside className="space-y-4"><Card className="border-[#dce4e7] bg-[#f4f7f7] p-5"><CloudSun className="h-6 w-6 text-[#315b7d]" /><h2 className="mt-4 font-semibold">Before you book</h2><p className="mt-2 text-sm leading-6 text-muted-foreground">Opening hours, prices, and availability can change. Verify current details before purchasing tickets or making reservations.</p></Card><Card className="border-[#dce4e7] bg-white p-5"><p className="text-sm font-semibold">{generatedItinerary ? "Generated with DeepSeek" : "Sample itinerary"}</p><p className="mt-3 text-sm leading-6 text-muted-foreground">Review each traveler’s priorities, daily costs, and unresolved conflicts before accepting. Coverage has not been independently scored.</p></Card><Button className="h-12 w-full rounded-full bg-[#ef6a53] text-white hover:bg-[#dc5944]">Accept this draft</Button><Button variant="outline" className="h-12 w-full rounded-full" aria-pressed={walkingMode === "reduced"} onClick={() => setWalkingMode((current) => current === "standard" ? "reduced" : "standard")}>{walkingMode === "reduced" ? "Restore original pace" : "Reduce walking"}</Button></aside>
+            <aside className="space-y-4"><Card className="border-[#dce4e7] bg-[#f4f7f7] p-5"><CloudSun className="h-6 w-6 text-[#315b7d]" /><h2 className="mt-4 font-semibold">Before you book</h2><p className="mt-2 text-sm leading-6 text-muted-foreground">Opening hours, prices, and availability can change. Verify current details before purchasing tickets or making reservations.</p></Card><Card className="border-[#dce4e7] bg-white p-5"><p className="text-sm font-semibold">{generatedItinerary ? "Generated with DeepSeek" : "Sample itinerary"}</p><p className="mt-3 text-sm leading-6 text-muted-foreground">Review each traveler’s priorities, daily costs, and unresolved conflicts before accepting. Coverage has not been independently scored.</p></Card>{isOrganizer && generatedItinerary && <Button disabled={shared.busy || planStale || !!shared.snapshot?.acceptedAt} onClick={()=>shared.update("accept",{expectedRevision:group?.revision})} className="h-12 w-full rounded-full bg-[#ef6a53] text-white hover:bg-[#dc5944]">{shared.snapshot?.acceptedAt?"Accepted":"Accept this draft"}</Button>}<Button variant="outline" className="h-12 w-full rounded-full" aria-pressed={walkingMode === "reduced"} onClick={() => setWalkingMode((current) => current === "standard" ? "reduced" : "standard")}>{walkingMode === "reduced" ? "Restore original pace" : "Reduce walking"}</Button></aside>
           </div>
         </section>
       )}
