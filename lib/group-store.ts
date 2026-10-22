@@ -1,10 +1,11 @@
 import { z } from "zod";
 import { aggregateProfiles, codeSchema, decisionSchema, nicknameSchema, placeNames, profileSchema, type GroupSnapshot, type Profile } from "./group-contract.ts";
 import { generateAIItinerary, ItineraryProviderError } from "./ai-itinerary.ts";
+import { scoreTravelStyle } from "./travel-personality.ts";
 
 export class GroupError extends Error { status:number; constructor(status: number, message: string) { super(message); this.status=status; } }
 type GroupRow = { code: string; name: string; created_at: string; revision: number; itinerary: string | null; plan_revision: number | null; conflict_choice: string; accepted_at: string | null; generating_until: number };
-type MemberRow = { id: string; group_code: string; name: string; role: "organizer" | "member"; answers: string | null; place_choices: string | null; completed: number; updated_at: string };
+type MemberRow = { id: string; group_code: string; name: string; role: "organizer" | "member"; answers: string | null; place_choices: string | null; style_answers: string | null; top_pick: string | null; share_style: number; completed: number; updated_at: string };
 const now = () => new Date().toISOString();
 const secret = () => Array.from(crypto.getRandomValues(new Uint8Array(32)), b => b.toString(16).padStart(2,"0")).join("");
 export async function hashToken(value: string) { return Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value))), b => b.toString(16).padStart(2,"0")).join(""); }
@@ -31,20 +32,20 @@ export async function quota(db: D1Database, scope: string, identity: string, lim
 function bearer(request: Request) { const token = request.headers.get("authorization")?.match(/^Bearer ([a-f0-9]{64})$/)?.[1]; if(!token) throw new GroupError(401,"This device has no access to this group. Use an invitation to join."); return token; }
 export async function authorize(db: D1Database, code: string, request: Request, organizer = false) {
   const validCode = codeSchema.parse(code);
-  const member = await db.prepare("SELECT id,group_code,name,role,answers,place_choices,completed,updated_at FROM trip_members WHERE group_code = ? AND token_hash = ?").bind(validCode,await hashToken(bearer(request))).first<MemberRow>();
+  const member = await db.prepare("SELECT id,group_code,name,role,answers,place_choices,style_answers,top_pick,share_style,completed,updated_at FROM trip_members WHERE group_code = ? AND token_hash = ?").bind(validCode,await hashToken(bearer(request))).first<MemberRow>();
   if(!member) throw new GroupError(403,"Your access is no longer valid. Rejoin using an invitation.");
   if(organizer && member.role !== "organizer") throw new GroupError(403,"Only the organizer can do this.");
   return member;
 }
 async function groupRow(db:D1Database,code:string) { const group = await db.prepare("SELECT * FROM trip_groups WHERE code = ?").bind(code).first<GroupRow>(); if(!group) throw new GroupError(404,"Group not found."); return group; }
-async function memberRows(db:D1Database,code:string) { return (await db.prepare("SELECT id,group_code,name,role,answers,place_choices,completed,updated_at FROM trip_members WHERE group_code = ? ORDER BY updated_at,id").bind(code).all<MemberRow>()).results; }
-function profileOf(member:MemberRow):Profile | undefined { if(!member.answers || !member.place_choices) return; return profileSchema.parse({answers:JSON.parse(member.answers),placeChoices:JSON.parse(member.place_choices),completed:!!member.completed}); }
+async function memberRows(db:D1Database,code:string) { return (await db.prepare("SELECT id,group_code,name,role,answers,place_choices,style_answers,top_pick,share_style,completed,updated_at FROM trip_members WHERE group_code = ? ORDER BY updated_at,id").bind(code).all<MemberRow>()).results; }
+function profileOf(member:MemberRow):Profile | undefined { if(!member.answers || !member.place_choices) return; return profileSchema.parse({answers:JSON.parse(member.answers),placeChoices:JSON.parse(member.place_choices),completed:!!member.completed, ...(member.style_answers ? {styleAnswers:JSON.parse(member.style_answers)} : {}), ...(member.top_pick ? {topPick:member.top_pick} : {}),shareStyle:!!member.share_style}); }
 export async function snapshot(db:D1Database,code:string,request:Request):Promise<GroupSnapshot> {
   const me = await authorize(db,code,request); const group = await groupRow(db,code); const members = await memberRows(db,code);
   const responses:GroupSnapshot["responses"] = {};
   for(const member of members) { if(me.role !== "organizer" && member.id !== me.id) continue; const profile=profileOf(member); if(profile) responses[member.id]={...profile,updatedAt:member.updated_at}; }
   return {group:{code:group.code,name:group.name,createdAt:group.created_at,revision:group.revision},currentMemberId:me.id,
-    members:members.map(m=>({id:m.id,name:m.name,role:m.role,completed:!!m.completed})),responses,
+    members:members.map(m=>{const result=m.completed && m.share_style && m.style_answers ? scoreTravelStyle(JSON.parse(m.style_answers)) : null;return {id:m.id,name:m.name,role:m.role,completed:!!m.completed,...(result?{sharedStyle:result}:{})};}),responses,
     itinerary:group.itinerary ? JSON.parse(group.itinerary) : undefined, planRevision:group.plan_revision,
     conflictChoice:decisionSchema.parse(group.conflict_choice),acceptedAt:group.accepted_at};
 }
@@ -75,7 +76,7 @@ export async function saveProfile(db:D1Database,code:string,request:Request) {
   await quota(db,"save",me.id,60,60);
   // A server-side revision invalidates plans made from older preferences.
   await db.batch([
-    db.prepare("UPDATE trip_members SET answers = ?, place_choices = ?, completed = ?, updated_at = ? WHERE id = ? AND group_code = ?").bind(JSON.stringify(input.answers),JSON.stringify(input.placeChoices),input.completed?1:0,now(),me.id,code),
+    db.prepare("UPDATE trip_members SET answers = ?, place_choices = ?, style_answers = ?, top_pick = ?, share_style = ?, completed = ?, updated_at = ? WHERE id = ? AND group_code = ?").bind(JSON.stringify(input.answers),JSON.stringify(input.placeChoices),input.styleAnswers?JSON.stringify(input.styleAnswers):null,input.topPick??null,input.shareStyle?1:0,input.completed?1:0,now(),me.id,code),
     db.prepare("UPDATE trip_groups SET revision = revision + 1, accepted_at = NULL WHERE code = ?").bind(code),
   ]);
   return snapshot(db,code,request);
@@ -94,7 +95,7 @@ export async function generateGroupPlan(db:D1Database,code:string,request:Reques
   const lock=await db.prepare("UPDATE trip_groups SET generating_until = ? WHERE code = ? AND revision = ? AND generating_until < ? RETURNING code").bind(lease,code,group.revision,Date.now()).first();
   if(!lock) throw new GroupError(409,"Another draft is being generated, or the group changed. Refresh and try again shortly.");
   try {
-    const travelers=members.map((m,i)=>({label:`Traveler ${i+1}`,answers:profiles[i].answers,mustVisits:Object.entries(profiles[i].placeChoices).filter(([,v])=>v==="must").map(([id])=>placeNames[id])}));
+    const travelers=members.map((m,i)=>{const profile=profiles[i],travelStyle=scoreTravelStyle(profile.styleAnswers);return {label:`Traveler ${i+1}`,answers:profile.answers,mustVisits:Object.entries(profile.placeChoices).filter(([,v])=>v==="must").map(([id])=>placeNames[id]),...(profile.topPick?{topPick:placeNames[profile.topPick]}:{}),...(travelStyle?{travelStyle}:{})};});
     const mustVisits=[...new Set(travelers.flatMap(t=>t.mustVisits))];
     const plan=await generateAIItinerary({answers,mustVisits,conflictChoice:input.conflictChoice,travelers},apiKey,model,fetcher);
     const saved=await db.prepare("UPDATE trip_groups SET itinerary = ?, plan_revision = ?, conflict_choice = ?, accepted_at = NULL WHERE code = ? AND revision = ? AND generating_until = ? RETURNING code").bind(JSON.stringify(plan),group.revision,input.conflictChoice,code,group.revision,lease).first();

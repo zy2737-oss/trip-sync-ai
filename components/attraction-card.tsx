@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { ArrowUpRight, Clock, Footprints, ImageIcon, MapPin } from "lucide-react";
+import { ArrowUpRight, Clock, Footprints, ImageIcon, MapPin, Star } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
@@ -13,6 +13,8 @@ type Props = {
   choice?: Choice;
   canSelectMust: boolean;
   onChoice: (choice: Choice) => void;
+  isTopPick?: boolean;
+  onTopPick?: () => void;
 };
 
 function AttractionPhoto({ src, alt, large = false }: { src?: string; alt: string; large?: boolean }) {
@@ -24,7 +26,7 @@ function AttractionPhoto({ src, alt, large = false }: { src?: string; alt: strin
   ) : <div className={`flex flex-col items-center justify-center gap-2 bg-[#e8efef] text-muted-foreground ${large ? "h-52" : "h-40"}`}><ImageIcon className="h-7 w-7" /><span className="text-sm">Photo unavailable</span></div>;
 }
 
-export function AttractionCard({ place, choice, canSelectMust, onChoice }: Props) {
+export function AttractionCard({ place, choice, canSelectMust, onChoice, isTopPick = false, onTopPick }: Props) {
   const detail = getAttractionDetail(place);
   const mapUrl = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${place.name}, ${place.area}, Tokyo, Japan`)}`;
   const choices = (context: string) => <div aria-label={`${place.name} preference ${context}`} className="grid grid-cols-3 gap-1 rounded-xl bg-[#f2f5f5] p-1">{(["must", "interested", "skip"] as const).map((value) => <button key={value} type="button" aria-pressed={choice === value} disabled={value === "must" && !canSelectMust} onClick={() => onChoice(value)} className={`rounded-lg px-2 py-2.5 text-xs font-semibold transition disabled:cursor-not-allowed disabled:opacity-40 ${choice === value ? value === "must" ? "bg-[#ef6a53] text-white" : "bg-white text-[#17384d] shadow-sm" : "text-muted-foreground hover:text-foreground"}`}>{value === "must" ? "Must-visit" : value === "interested" ? "Interested" : "Skip"}</button>)}</div>;
@@ -37,7 +39,7 @@ export function AttractionCard({ place, choice, canSelectMust, onChoice }: Props
           <div className="p-4"><div className="flex items-start justify-between gap-2"><p className="font-semibold">{place.name}</p>{place.rating && <Badge variant="secondary">★ {place.rating.toFixed(1)}</Badge>}</div><p className="mt-1 flex items-center gap-1 text-sm text-muted-foreground"><MapPin className="h-3.5 w-3.5" />{place.area}</p><p className="mt-3 flex items-center gap-1 text-sm font-medium text-[#d9513f]">Explore this place <ArrowUpRight className="h-4 w-4" /></p></div>
         </button>
       </DialogTrigger>
-      <div className="px-4 pb-4">{choices("card")}</div>
+      <div className="space-y-3 px-4 pb-4">{choices("card")}{onTopPick && <button type="button" aria-label={`Make ${place.name} my first choice`} aria-pressed={isTopPick} disabled={!canSelectMust && choice!=="must"} onClick={onTopPick} className={`flex w-full items-center justify-center gap-2 rounded-xl border px-3 py-2.5 text-xs font-semibold disabled:opacity-40 ${isTopPick?"border-[#d9a23e] bg-[#fff5dc] text-[#805519]":"border-[#dce4e7] text-[#65777e] hover:bg-[#f4f7f7]"}`}><Star className={`h-4 w-4 ${isTopPick?"fill-current":""}`} />{isTopPick?"My #1 choice":"Make this my #1"}</button>}</div>
     </Card>
     <DialogContent className="max-h-[90dvh] gap-0 overflow-y-auto rounded-2xl p-0 sm:max-w-2xl [&>button:last-child]:rounded-full [&>button:last-child]:bg-white [&>button:last-child]:p-2 [&>button:last-child]:opacity-100">
       <AttractionPhoto src={detail ? `/attractions/${detail.id}.jpg` : undefined} alt={detail?.photo.alt ?? place.name} large />

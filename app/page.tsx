@@ -25,6 +25,9 @@ import { Label } from "@/components/ui/label";
 import { DailyItinerary } from "@/components/daily-itinerary";
 import { AttractionCard } from "@/components/attraction-card";
 import { Input } from "@/components/ui/input";
+import { TravelStyleCard, GroupTravelStyles, StyleIcon } from "@/components/travel-style-card";
+import { scoreTravelStyle, styleQuestions, styleAnswersSchema, styleIds, travelStyles, type StyleAnswers } from "@/lib/travel-personality";
+import type { Profile } from "@/lib/group-contract";
 import type { WalkingMode } from "@/lib/itinerary-walking";
 import type { AIItinerary } from "@/lib/ai-itinerary";
 
@@ -134,6 +137,9 @@ export default function Home() {
   const [screen, setScreen] = useState<Screen>("lobby");
   useEffect(()=>{window.scrollTo(0,0);},[screen]);
   const [questionIndex, setQuestionIndex] = useState(0);
+  const [styleAnswers, setStyleAnswers] = useState<Partial<StyleAnswers>>({});
+  const [topPick, setTopPick] = useState<Profile["topPick"]>();
+  const [shareStyle, setShareStyle] = useState(false);
   const [answers, setAnswers] = useState<Record<string, string>>(defaultAnswers);
   const [places, setPlaces] = useState<Place[]>(fallbackPlaces);
   const [placeSource, setPlaceSource] = useState<"google_places" | "demo">("demo");
@@ -167,6 +173,7 @@ export default function Home() {
       const own=shared.snapshot.responses[shared.snapshot.currentMemberId];
       setAnswers(own?{...defaultAnswers,...own.answers}:defaultAnswers);
       setPlaceChoices(own?{...defaultPlaceChoices,...own.placeChoices}:defaultPlaceChoices);
+      setStyleAnswers(own?.styleAnswers ?? {});setTopPick(own?.topPick);setShareStyle(own?.shareStyle ?? false);
       loadedMember.current=shared.snapshot.currentMemberId;
     }
     setGeneratedItinerary(shared.snapshot.itinerary);
@@ -184,7 +191,9 @@ export default function Home() {
   async function handleCreateGroup(){await shared.enter("create",groupNameInput.trim()||"Our trip",nicknameInput);}
   async function handleJoinGroup(){await shared.enter("join",joinCodeInput.trim().toUpperCase(),joinNameInput);}
   async function markCurrentCompleteAndShow(target:Screen){
-    const saved=await shared.save({answers:answers as import("@/lib/group-contract").Profile["answers"],placeChoices,completed:true});
+    const parsed=styleAnswersSchema.safeParse(styleAnswers);
+    if(!parsed.success || !topPick){shared.setError("Complete the six style questions and choose your #1 attraction before submitting.");return;}
+    const saved=await shared.save({answers:answers as Profile["answers"],placeChoices,completed:true,styleAnswers:parsed.data,topPick,shareStyle});
     if(saved)setScreen(target);
   }
 
@@ -252,10 +261,22 @@ export default function Home() {
     return () => lifecycle.abort();
   }, [conflictChoice]);
 
-  const currentQuestion = questions[questionIndex];
+  const personalityCount = styleQuestions.length;
+  const questionCount = personalityCount + questions.length;
+  const isStyleQuestion = questionIndex < personalityCount;
+  const currentQuestion = isStyleQuestion ? styleQuestions[questionIndex] : questions[questionIndex-personalityCount];
+  const questionValue = currentQuestion ? (isStyleQuestion ? styleAnswers[currentQuestion.key as keyof StyleAnswers] : answers[currentQuestion.key]) : undefined;
+  const personality = scoreTravelStyle(styleAnswers);
+  const groupStyleEntries = members.flatMap(member=>{
+    const result=isOrganizer?scoreTravelStyle(responses[member.id]?.styleAnswers):member.sharedStyle;
+    return member.completed && result ? [{id:member.id,name:member.name,result}] : [];
+  });
   const mustVisits = useMemo(() => places.filter((place) => placeChoices[place.id] === "must"), [places, placeChoices]);
-  const setChoice = (placeId: string, value: PlaceChoice) => setPlaceChoices((current) => ({ ...current, [placeId]: value }));
-  const nextQuestion = () => questionIndex < questions.length ? setQuestionIndex((current) => current + 1) : setScreen("profile");
+  const setChoice = (placeId: string, value: PlaceChoice) => {setPlaceChoices((current) => ({ ...current, [placeId]: value }));if(placeId===topPick && value!=="must")setTopPick(undefined);};
+  const chooseTopPick = (placeId: string) => {if(mustVisits.length>=3 && placeChoices[placeId]!=="must")return;setChoice(placeId,"must");setTopPick(placeId as Profile["topPick"]);};
+  const answerQuestion = (value:string) => {if(isStyleQuestion)setStyleAnswers(current=>({...current,[currentQuestion.key]:value}));else setAnswers(current=>({...current,[currentQuestion.key]:value}));};
+  const nextQuestion = () => questionIndex < questionCount ? setQuestionIndex((current) => current + 1) : setScreen("profile");
+  useEffect(()=>{if(screen==="quiz")window.scrollTo(0,0);},[questionIndex,screen]);
 
   return (
     <main className="min-h-screen bg-background text-foreground">
@@ -273,7 +294,8 @@ export default function Home() {
                 <div className="mb-auto flex items-center justify-between"><Badge className="border-white/20 bg-white/12 px-3 py-1 text-white backdrop-blur">TRIP · TOKYO</Badge><span className="rounded-full border border-white/20 bg-black/15 px-3 py-1 text-sm backdrop-blur">5-day prototype</span></div>
                 <p className="mb-2 text-sm font-semibold uppercase tracking-[0.2em] text-[#ffd0c5]">{group ? group.name : "Japan graduation trip"}</p>
                 <h1 className="max-w-xl text-4xl font-semibold leading-[1.04] tracking-[-0.04em] sm:text-6xl">Build the trip everyone wants to take.</h1>
-                <p className="mt-4 max-w-xl text-base leading-7 text-white/78 sm:text-lg">Everyone answers for themselves. TripSync combines real profiles into a fair itinerary — each friend joins from their own device. No registration needed.</p>
+                <p className="mt-4 max-w-xl text-base leading-7 text-white/78 sm:text-lg">Discover your travel style, keep your practical limits clear, and build one shared Tokyo plan. Each friend joins from their own device. No registration needed.</p>
+                <p className="mt-4 text-sm text-[#ffd0c5]">6 playful style picks + 5 practical questions + your Tokyo favorites.</p>
                 {group && currentMember ? (
                   <div className="mt-7 flex flex-wrap items-center gap-3"><Button size="lg" className="h-12 rounded-full bg-[#f26a52] px-6 text-white hover:bg-[#db5843]" onClick={() => { setQuestionIndex(0); setScreen("quiz"); }}>Answer as {currentMember.name} <ChevronRight className="ml-1 h-4 w-4" /></Button><Button size="lg" variant="outline" className="h-12 rounded-full border-white/30 bg-white/8 px-6 text-white hover:bg-white/16 hover:text-white" onClick={() => setScreen("group")}>View group summary</Button><span className="rounded-full bg-white/15 px-3 py-1 text-sm">Invite code: <strong>{group.code}</strong></span></div>
                 ) : (
@@ -312,7 +334,7 @@ export default function Home() {
                 <Progress value={members.length ? (completedMembers.length / members.length) * 100 : 0} className="mt-5 h-2 bg-[#e9eff1] [&>div]:bg-[#ef6a53]" />
                 <div className="mt-5 space-y-3">
                   {members.map((member) => {
-                    const done = !!responses[member.id]?.completed;
+                    const done = member.completed;
                     const isYou = member.id === currentMemberId;
                     return (
                       <button key={member.id} type="button" disabled={!isYou} onClick={() => {setQuestionIndex(0);setScreen("quiz");}} className={`flex w-full items-center gap-3 rounded-2xl border p-3 text-left transition ${isYou ? "border-[#ef6a53] bg-[#fff4f0]" : "border-[#e2e9eb] hover:border-[#9eb1b8]"}`}>
@@ -338,6 +360,7 @@ export default function Home() {
                 </div>
               </Card>
             )}
+            <Card className="border-[#dce4e7] bg-white p-5 sm:p-6"><p className="text-xs font-semibold uppercase tracking-[0.16em] text-[#d9513f]">What is your travel style?</p><p className="mt-2 text-sm leading-6 text-muted-foreground">Six lighthearted styles. Your budget and walking needs stay separate.</p><div className="mt-4 grid grid-cols-2 gap-3">{styleIds.map(id=><div key={id} className="flex items-center gap-2 text-xs font-medium"><span className="grid h-8 w-8 shrink-0 place-items-center rounded-xl" style={{background:travelStyles[id].softColor,color:travelStyles[id].color}}><StyleIcon id={id} className="h-4 w-4" /></span>{travelStyles[id].shortName}</div>)}</div></Card>
             <Card className="border-[#dce4e7] bg-[#f5f8f8] p-5 sm:p-6"><div className="flex items-center justify-between gap-3"><div><div className="flex items-center gap-2 text-sm font-semibold text-[#315b7d]"><span className="h-2 w-2 rounded-full bg-[#3c8f72]" /> PLACE DATA</div><p className="mt-2 text-sm leading-6 text-muted-foreground">{placeSource === "google_places" ? "Live Google Places data connected" : "Demo dataset active · Google Places adapter ready"}</p></div><Button aria-label="Refresh place data" size="icon" variant="outline" className="rounded-full" onClick={refreshPlaces} disabled={refreshing}><RefreshCw className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`} /></Button></div></Card>
             <p className="px-2 text-xs leading-5 text-muted-foreground">Tokyo photo by Christophe95, licensed CC BY-SA 4.0 via Wikimedia Commons.</p>
           </div>
@@ -346,26 +369,28 @@ export default function Home() {
 
       {screen === "quiz" && (
         <section className="mx-auto w-full max-w-3xl px-4 pb-16 pt-6 sm:px-7 sm:pt-10">
-          <div className="mb-8 flex items-center gap-4"><Button aria-label="Go back" variant="ghost" size="icon" className="rounded-full" onClick={() => questionIndex === 0 ? setScreen("lobby") : setQuestionIndex((value) => value - 1)}><ArrowLeft className="h-5 w-5" /></Button><div className="flex-1"><div className="mb-2 flex justify-between text-sm"><span className="font-medium">{currentMember ? `${currentMember.name}’s travel style` : "Your travel style"}</span><span className="text-muted-foreground">{questionIndex + 1} of {questions.length + 1}</span></div><Progress value={((questionIndex + 1) / (questions.length + 1)) * 100} className="h-2 [&>div]:bg-[#ef6a53]" /></div></div>
-          {questionIndex < questions.length ? (
+          <div className="mb-8 flex items-center gap-4"><Button aria-label="Go back" variant="ghost" size="icon" className="rounded-full" onClick={() => questionIndex === 0 ? setScreen("lobby") : setQuestionIndex((value) => value - 1)}><ArrowLeft className="h-5 w-5" /></Button><div className="flex-1"><div className="mb-2 flex justify-between text-sm"><span className="font-medium">{currentMember ? `${currentMember.name}’s travel style` : "Your travel style"}</span><span className="text-muted-foreground">{questionIndex + 1} of {questionCount + 1}</span></div><Progress value={((questionIndex + 1) / (questionCount + 1)) * 100} className="h-2 [&>div]:bg-[#ef6a53]" /></div></div>
+          {questionIndex < questionCount ? (
             <div>
+              <p className="mb-3 text-xs font-medium text-muted-foreground">{isStyleQuestion ? `PART 1 · YOUR TRAVEL STYLE · ${questionIndex+1}/6` : `PART 2 · PRACTICAL PLANNING · ${questionIndex-personalityCount+1}/5`}</p>
               <p className="text-sm font-semibold tracking-[0.16em] text-[#d9513f]">{currentQuestion.eyebrow}</p><h1 className="mt-3 text-3xl font-semibold leading-tight tracking-[-0.03em] sm:text-5xl">{currentQuestion.title}</h1><p className="mt-4 max-w-2xl text-base leading-7 text-muted-foreground">{currentQuestion.help}</p>
-              <RadioGroup value={answers[currentQuestion.key]} onValueChange={(value) => setAnswers((current) => ({ ...current, [currentQuestion.key]: value }))} className="mt-8 grid gap-3">
+              <RadioGroup value={questionValue ?? ""} onValueChange={answerQuestion} className="mt-8 grid gap-3">
                 {currentQuestion.options.map(([value, title, description]) => (
-                  <Label key={value} htmlFor={`${currentQuestion.key}-${value}`} className={`group flex cursor-pointer items-start gap-4 rounded-2xl border p-5 transition ${answers[currentQuestion.key] === value ? "border-[#ef6a53] bg-[#fff4f0] shadow-[0_8px_30px_rgba(239,106,83,.10)]" : "border-[#dce4e7] bg-white hover:border-[#9eb1b8]"}`}><RadioGroupItem id={`${currentQuestion.key}-${value}`} value={value} className="mt-0.5 border-[#899aa0] text-[#e55e47]" /><span><span className="block text-base font-semibold">{title}</span><span className="mt-1 block text-sm font-normal leading-6 text-muted-foreground">{description}</span></span></Label>
+                  <Label key={value} htmlFor={`${currentQuestion.key}-${value}`} className={`group flex cursor-pointer items-start gap-4 rounded-2xl border p-5 transition ${questionValue === value ? "border-[#ef6a53] bg-[#fff4f0] shadow-[0_8px_30px_rgba(239,106,83,.10)]" : "border-[#dce4e7] bg-white hover:border-[#9eb1b8]"}`}><RadioGroupItem id={`${currentQuestion.key}-${value}`} value={value} className="mt-0.5 border-[#899aa0] text-[#e55e47]" /><span><span className="block text-base font-semibold">{title}</span><span className="mt-1 block text-sm font-normal leading-6 text-muted-foreground">{description}</span></span></Label>
                 ))}
               </RadioGroup>
-              <Button size="lg" className="mt-8 h-12 rounded-full bg-[#17384d] px-7 hover:bg-[#0f2c3f]" onClick={nextQuestion}>Continue</Button>
+              <Button size="lg" className="mt-8 h-12 rounded-full bg-[#17384d] px-7 hover:bg-[#0f2c3f]" disabled={!questionValue} onClick={nextQuestion}>Continue</Button>
+              {isStyleQuestion && <p className="mt-4 text-xs leading-5 text-muted-foreground">Just for this trip. These picks do not change your budget, walking limit or practical answers.</p>}
             </div>
           ) : (
             <div>
-              <p className="text-sm font-semibold tracking-[0.16em] text-[#d9513f]">TOKYO PICKS</p><h1 className="mt-3 text-3xl font-semibold leading-tight tracking-[-0.03em] sm:text-5xl">What deserves a place in your Tokyo story?</h1><p className="mt-4 text-base leading-7 text-muted-foreground">Click a card for photos, highlights, and visit tips. Then mark up to three must-visits.</p>
+              <p className="text-sm font-semibold tracking-[0.16em] text-[#d9513f]">TOKYO PICKS</p><h1 className="mt-3 text-3xl font-semibold leading-tight tracking-[-0.03em] sm:text-5xl">What deserves a place in your Tokyo story?</h1><p className="mt-4 text-base leading-7 text-muted-foreground">Choose one #1 attraction, then up to two other must-visits. Open any card for photos and visit tips. Your first choice is a priority, not a guaranteed booking.</p>
               <div className="mt-8 grid gap-4 sm:grid-cols-2">
                 {places.map((place) => (
-                  <AttractionCard key={place.id} place={place} choice={placeChoices[place.id]} canSelectMust={mustVisits.length < 3 || placeChoices[place.id] === "must"} onChoice={(choice) => setChoice(place.id, choice)} />
+                  <AttractionCard key={place.id} place={place} choice={placeChoices[place.id]} canSelectMust={mustVisits.length < 3 || placeChoices[place.id] === "must"} onChoice={(choice) => setChoice(place.id, choice)} isTopPick={topPick===place.id} onTopPick={()=>chooseTopPick(place.id)} />
                 ))}
               </div>
-              <div className="mt-7 flex items-center justify-between gap-4"><p className="text-sm text-muted-foreground">{mustVisits.length}/3 must-visits selected</p><Button size="lg" className="h-12 rounded-full bg-[#17384d] px-7 hover:bg-[#0f2c3f]" onClick={nextQuestion}>Create my profile</Button></div>
+              <div className="mt-7 flex items-center justify-between gap-4"><p className="text-sm text-muted-foreground">{mustVisits.length}/3 must-visits · {topPick ? "#1 selected" : "Choose your #1 to continue"}</p><Button disabled={!topPick || !personality} size="lg" className="h-12 rounded-full bg-[#17384d] px-7 hover:bg-[#0f2c3f]" onClick={nextQuestion}>Create my profile</Button></div>
             </div>
           )}
         </section>
@@ -373,21 +398,28 @@ export default function Home() {
 
       {screen === "profile" && (
         <section className="mx-auto w-full max-w-5xl px-4 pb-16 pt-8 sm:px-7 sm:pt-12"><div className="grid gap-6 lg:grid-cols-[1fr_0.85fr]">
-          <Card className="relative overflow-hidden border-0 bg-[#17384d] p-7 text-white shadow-[0_22px_70px_rgba(23,56,77,.2)] sm:p-10"><Sparkles className="absolute right-8 top-8 h-8 w-8 text-[#f5b6a9]" /><p className="text-sm font-semibold uppercase tracking-[0.18em] text-[#f5b6a9]">{currentMember ? `${currentMember.name}’s Travel DNA` : "Your Travel DNA"}</p><h1 className="mt-5 max-w-lg text-4xl font-semibold leading-[1.05] tracking-[-0.04em] sm:text-6xl">Your travel preferences</h1><p className="mt-5 max-w-xl text-base leading-7 text-white/75">Review the preferences below, then submit them for your organizer to include in the group plan.</p><div className="mt-9 flex flex-wrap gap-2">{Object.values(answers).map((answer) => <Badge key={answer} className="border-white/15 bg-white/10 px-3 py-1.5 text-white">{answerLabels[answer]}</Badge>)}</div></Card>
-          <div className="space-y-5"><Card className="border-[#dce4e7] bg-white p-6"><p className="text-sm font-semibold text-[#d9513f]">YOUR MUST-VISITS</p><div className="mt-4 space-y-3">{mustVisits.map((place, index) => <div key={place.id} className="flex items-center gap-3 rounded-2xl bg-[#f4f7f7] p-3"><span className="grid h-8 w-8 place-items-center rounded-full bg-[#17384d] text-sm font-semibold text-white">{index + 1}</span><div><p className="font-medium">{place.name}</p><p className="text-sm text-muted-foreground">{place.area}</p></div></div>)}</div></Card><Button size="lg" className="h-13 w-full rounded-full bg-[#ef6a53] text-white hover:bg-[#dc5944]" disabled={shared.busy} onClick={() => markCurrentCompleteAndShow("group")}>{shared.busy ? "Saving…" : "Submit my profile to the group"}</Button><button className="w-full text-center text-sm text-muted-foreground underline-offset-4 hover:underline" onClick={() => { setQuestionIndex(0); setScreen("quiz"); }}>Edit my answers</button></div>
+          <TravelStyleCard result={personality} name={currentMember?.name} />
+          <div className="space-y-5">
+            <Card className="border-[#dce4e7] bg-white p-6"><p className="text-sm font-semibold text-[#d9513f]">YOUR PLANNING ANSWERS</p><p className="mt-2 text-sm leading-6 text-muted-foreground">These explicit choices take priority over your style card.</p><div className="mt-4 flex flex-wrap gap-2">{Object.values(answers).map(answer=><Badge key={answer} variant="secondary" className="px-3 py-1.5">{answerLabels[answer]}</Badge>)}</div></Card>
+            <Card className="border-[#dce4e7] bg-white p-6"><p className="text-sm font-semibold text-[#d9513f]">YOUR TOKYO PRIORITIES</p><div className="mt-4 space-y-3">{[...mustVisits].sort((a,b)=>Number(b.id===topPick)-Number(a.id===topPick)).map(place=><div key={place.id} className={`flex items-center gap-3 rounded-2xl p-3 ${place.id===topPick?"bg-[#fff5dc]":"bg-[#f4f7f7]"}`}><span className="text-xs font-semibold text-[#805519]">{place.id===topPick?"#1":"Also"}</span><div><p className="font-medium">{place.name}</p><p className="text-sm text-muted-foreground">{place.area}</p></div></div>)}</div></Card>
+            <label className="flex cursor-pointer items-start gap-3 rounded-2xl border border-[#dce4e7] bg-white p-4"><input type="checkbox" checked={shareStyle} onChange={e=>setShareStyle(e.target.checked)} className="mt-1 h-4 w-4 accent-[#d9513f]" /><span><span className="block text-sm font-semibold">Share my style card with this group</span><span className="mt-1 block text-xs leading-5 text-muted-foreground">Optional. Only your style label is shared with fellow members. Your detailed answers remain visible only to you and the organizer.</span></span></label>
+            <Button size="lg" className="h-13 w-full rounded-full bg-[#ef6a53] text-white hover:bg-[#dc5944]" disabled={shared.busy || !personality || !topPick} onClick={()=>markCurrentCompleteAndShow("group")}>{shared.busy?"Saving…":"Submit my profile to the group"}</Button>
+            <button className="w-full text-center text-sm text-muted-foreground underline-offset-4 hover:underline" onClick={()=>{setQuestionIndex(0);setScreen("quiz");}}>Edit my answers</button>
+          </div>
         </div></section>
       )}
 
       {screen === "group" && !isOrganizer && (
-        <section className="mx-auto max-w-3xl space-y-5 px-5 py-10"><h1 className="text-3xl font-semibold">Your group, on everyone’s device</h1><p>{currentMember?.completed?"Your profile is submitted.":"Submit your profile so the organizer can include you."} {completedMembers.length} of {members.length} travelers are ready.</p><p className="text-muted-foreground">Only the organizer sees everyone’s detailed preferences and generates the itinerary. Your answers stay editable on this device.</p><Button onClick={()=>{setQuestionIndex(0);setScreen("quiz");}}>Edit my answers</Button><Button variant="outline" className="ml-3" onClick={()=>setScreen("lobby")}>Group lobby</Button>{shared.snapshot?.itinerary && <Button className="ml-3" onClick={()=>setScreen("itinerary")}>View shared itinerary</Button>}</section>
+        <section className="mx-auto max-w-3xl space-y-5 px-5 py-10"><h1 className="text-3xl font-semibold">Your group, on everyone’s device</h1><p>{currentMember?.completed?"Your profile is submitted.":"Submit your profile so the organizer can include you."} {completedMembers.length} of {members.length} travelers are ready.</p><p className="text-muted-foreground">Only the organizer sees everyone’s detailed preferences and generates the itinerary. Your answers stay editable on this device.</p><TravelStyleCard result={scoreTravelStyle(responses[currentMemberId??""]?.styleAnswers)} name={currentMember?.name} /><GroupTravelStyles entries={groupStyleEntries} /><Button onClick={()=>{setQuestionIndex(0);setScreen("quiz");}}>Edit my answers</Button><Button variant="outline" className="ml-3" onClick={()=>setScreen("lobby")}>Group lobby</Button>{shared.snapshot?.itinerary && <Button className="ml-3" onClick={()=>setScreen("itinerary")}>View shared itinerary</Button>}</section>
       )}
       {screen === "group" && isOrganizer && (
         <section className="mx-auto w-full max-w-6xl px-4 pb-20 pt-7 sm:px-7 sm:pt-10">
           <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-end"><div><p className="text-sm font-semibold tracking-[0.16em] text-[#d9513f]">GROUP PROFILE</p><h1 className="mt-2 text-3xl font-semibold tracking-[-0.03em] sm:text-5xl">Your group agrees on more than you think.</h1></div><div className="flex -space-x-2">{members.map((member) => <span key={member.id} title={member.name} className={`grid h-10 w-10 place-items-center rounded-full border-2 border-background text-xs font-semibold text-white ${member.color}`}>{member.initials}</span>)}</div></div>
           <p className="mt-3 text-sm text-muted-foreground">{completedMembers.length} of {members.length} travelers have submitted. Summary below uses only submitted profiles{group ? ` · Group ${group.code}` : ""}.</p>
+          <div className="mt-6"><GroupTravelStyles entries={groupStyleEntries} privateView /></div>
           <div className="mt-6 grid gap-5 lg:grid-cols-3"><MetricCard icon={<Heart className="h-5 w-5" />} label="Shared pace (majority)" value={answerLabels[aggregatedAnswers.pace] ?? aggregatedAnswers.pace} note={completedMembers.length ? `From ${completedMembers.length} submitted profile${completedMembers.length > 1 ? "s" : ""}` : "Waiting for answers"} /><MetricCard icon={<Footprints className="h-5 w-5" />} label="Walking limit (lowest wins)" value={answerLabels[aggregatedAnswers.walking] ?? aggregatedAnswers.walking} note="Plan around the most limited traveler" /><MetricCard icon={<CircleDollarSign className="h-5 w-5" />} label="Budget comfort (lowest wins)" value={answerLabels[aggregatedAnswers.budget] ?? aggregatedAnswers.budget} note="Protects the tightest budget" /></div>
           <div className="mt-6 grid gap-6 lg:grid-cols-[0.9fr_1.1fr]">
-            <Card className="border-[#dce4e7] bg-white p-6"><div className="flex items-center justify-between"><h2 className="text-xl font-semibold">Everyone gets a moment</h2><Badge className="bg-[#e3f3ed] text-[#23664f]">{completedMembers.length}/{members.length} covered</Badge></div><div className="mt-5 space-y-4">{completedMembers.length ? completedMembers.map((member) => { const r = responses[member.id]; const firstMust = r ? places.find((p) => r.placeChoices[p.id as keyof typeof r.placeChoices] === "must") : undefined; return <div key={member.id} className="flex gap-3"><span className={`mt-0.5 grid h-9 w-9 shrink-0 place-items-center rounded-full text-xs font-semibold text-white ${member.color}`}>{member.initials}</span><div><p className="font-medium">{firstMust?.name ?? "No must-visit picked yet"}</p><p className="text-sm text-muted-foreground">{member.name} · {r ? (answerLabels[r.answers.food] ?? "") : ""}</p></div></div>; }) : <p className="text-sm text-muted-foreground">No profiles submitted yet. Go back to the lobby and answer as at least one traveler.</p>}</div></Card>
+            <Card className="border-[#dce4e7] bg-white p-6"><div className="flex items-center justify-between"><h2 className="text-xl font-semibold">Everyone gets a moment</h2><Badge className="bg-[#e3f3ed] text-[#23664f]">{completedMembers.length}/{members.length} submitted</Badge></div><div className="mt-5 space-y-4">{completedMembers.length ? completedMembers.map((member) => { const r = responses[member.id]; const firstMust = r ? places.find(p=>p.id===r.topPick) ?? places.find((p) => r.placeChoices[p.id as keyof typeof r.placeChoices] === "must") : undefined; return <div key={member.id} className="flex gap-3"><span className={`mt-0.5 grid h-9 w-9 shrink-0 place-items-center rounded-full text-xs font-semibold text-white ${member.color}`}>{member.initials}</span><div><p className="font-medium">{r?.topPick ? "#1 · " : ""}{firstMust?.name ?? "No must-visit picked yet"}</p><p className="text-sm text-muted-foreground">{member.name} · {r ? (answerLabels[r.answers.food] ?? "") : ""}</p></div></div>; }) : <p className="text-sm text-muted-foreground">No profiles submitted yet. Go back to the lobby and answer as at least one traveler.</p>}</div></Card>
             {hasBudgetConflict ? (
             <Card className="border-[#f0c7bd] bg-[#fff8f5] p-6"><div className="flex items-start gap-3"><span className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-[#f4d7cf] text-[#b64735]"><Utensils className="h-5 w-5" /></span><div><p className="text-sm font-semibold text-[#b64735]">1 DECISION NEEDED</p><h2 className="mt-1 text-xl font-semibold">Special dinner vs. daily budget</h2><p className="mt-2 text-sm leading-6 text-muted-foreground">Some travelers chose a tight daily budget while others want a splurge or food-led plan. Decide together how to handle the special dinner.</p></div></div><RadioGroup disabled={shared.busy} value={conflictChoice} onValueChange={setConflictChoice} className="mt-5 gap-3">{[["alternative", "Choose a lower-cost alternative", "Everyone stays together · budget protected"],["optional", "Make the dinner optional", "Those who want can splurge · others get a nearby casual option"],["exception", "Allow one budget exception", "Everyone joins · the tightest cap is relaxed for one evening"]].map(([value, title, description]) => <Label key={value} htmlFor={`conflict-${value}`} className={`flex cursor-pointer items-start gap-3 rounded-2xl border p-4 ${conflictChoice === value ? "border-[#ef6a53] bg-white" : "border-[#eadbd6] bg-white/55"}`}><RadioGroupItem id={`conflict-${value}`} value={value} className="mt-0.5 text-[#e75f48]" /><span><span className="block font-semibold">{title}</span><span className="mt-1 block text-sm font-normal text-muted-foreground">{description}</span></span></Label>)}</RadioGroup></Card>
             ) : (

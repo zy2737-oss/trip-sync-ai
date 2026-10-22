@@ -7,7 +7,8 @@ import { createGroup, joinGroup, snapshot, saveProfile, generateGroupPlan, accep
 // SQLite-backed D1 adapter: executes the real migration, SQL, authorization and generation flow.
 function database() {
   const sql=new DatabaseSync(":memory:");sql.exec("PRAGMA foreign_keys = ON");
-  sql.exec(readFileSync(new URL("../drizzle/0000_known_layla_miller.sql",import.meta.url),"utf8"));
+  const journal=JSON.parse(readFileSync(new URL("../drizzle/meta/_journal.json",import.meta.url),"utf8"));
+  for(const entry of journal.entries) sql.exec(readFileSync(new URL(`../drizzle/${entry.tag}.sql`,import.meta.url),"utf8"));
   const db={prepare(query){let values=[];return {bind(...args){values=args;return this;},async first(){return sql.prepare(query).get(...values)??null;},async all(){return {results:sql.prepare(query).all(...values)};},async run(){const result=sql.prepare(query).run(...values);return {success:true,meta:{changes:Number(result.changes)}};}};},async batch(statements){sql.exec("BEGIN");try{const results=[];for(const s of statements)results.push(await s.run());sql.exec("COMMIT");return results;}catch(e){sql.exec("ROLLBACK");throw e;}}};
   return {db,sql};
 }
@@ -82,4 +83,38 @@ test("profile changes during generation cannot publish a stale result",async()=>
 test("deleting a group removes its profiles and saved plan",async()=>{
   const {db,sql,owner}=await setup();await deleteGroup(db,owner.code,req(undefined,owner.token,"DELETE"));
   assert.equal(sql.prepare("SELECT count(*) AS n FROM trip_groups").get().n,0);assert.equal(sql.prepare("SELECT count(*) AS n FROM trip_members").get().n,0);sql.close();
+});
+
+const foodStyle={bestDay:"food",freeTime:"slow",memory:"food",rain:"slow",research:"food",disappointment:"food"};
+test("travel style and top pick persist; sharing a label never shares raw answers with peers",async()=>{
+  const {db,sql,owner,friend}=await setup();
+  await saveProfile(db,owner.code,req({...profile({}, {sensoji:"must"}),styleAnswers:foodStyle,topPick:"sensoji",shareStyle:false},owner.token,"PUT"));
+  let peer=await snapshot(db,owner.code,req(undefined,friend.token,"GET"));
+  assert.equal(peer.members.find(m=>m.role==="organizer").sharedStyle,undefined);
+  assert.equal(Object.keys(peer.responses).length,0);
+  const restored=await snapshot(db,owner.code,req(undefined,owner.token,"GET"));
+  assert.deepEqual(restored.responses[restored.currentMemberId].styleAnswers,foodStyle);
+  assert.equal(restored.responses[restored.currentMemberId].topPick,"sensoji");
+  await saveProfile(db,owner.code,req({...profile({}, {sensoji:"must"}),styleAnswers:foodStyle,topPick:"sensoji",shareStyle:true},owner.token,"PUT"));
+  peer=await snapshot(db,owner.code,req(undefined,friend.token,"GET"));
+  assert.deepEqual(peer.members.find(m=>m.role==="organizer").sharedStyle.primary,["food"]);
+  assert.equal(JSON.stringify(peer).includes("bestDay"),false);
+  // Revoking sharing removes the result on the next snapshot.
+  await saveProfile(db,owner.code,req({...profile({}, {sensoji:"must"}),styleAnswers:foodStyle,topPick:"sensoji",shareStyle:false},owner.token,"PUT"));
+  peer=await snapshot(db,owner.code,req(undefined,friend.token,"GET"));
+  assert.equal(peer.members.find(m=>m.role==="organizer").sharedStyle,undefined);sql.close();
+});
+test("generation passes soft style cues and explicit first priorities alongside unchanged hard limits",async()=>{
+  const {db,sql,owner,friend}=await setup();
+  await saveProfile(db,owner.code,req({...profile({budget:"value",walking:"light"},{sensoji:"must"}),styleAnswers:foodStyle,topPick:"sensoji",shareStyle:false},owner.token,"PUT"));
+  const snap=await saveProfile(db,owner.code,req(profile(),friend.token,"PUT"));
+  await generateGroupPlan(db,owner.code,req({conflictChoice:"alternative",expectedRevision:snap.group.revision},owner.token),"key",undefined,async(url,init)=>{
+    const body=JSON.parse(init.body),input=JSON.parse(body.messages[1].content);
+    const styled=input.travelers.find(t=>t.travelStyle);
+    assert.equal(styled.topPick,"Sensō-ji");assert.deepEqual(styled.travelStyle.primary,["food"]);
+    assert.equal(styled.answers.budget,"value");assert.equal(styled.answers.walking,"light");
+    assert.equal(JSON.stringify(input).includes("QA"),false);assert.equal(JSON.stringify(input).includes("bestDay"),false);
+    assert.match(body.messages[0].content,/never override/i);
+    return provider();
+  });sql.close();
 });

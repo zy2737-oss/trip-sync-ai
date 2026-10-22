@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { AIItinerary } from "./ai-itinerary";
+import { styleAnswersSchema, type StyleResult } from "./travel-personality.ts";
 
 export const answersSchema = z.object({
   pace: z.enum(["slow", "balanced", "packed"]), walking: z.enum(["light", "moderate", "active"]),
@@ -12,12 +13,19 @@ export const profileSchema = z.object({
   answers: answersSchema,
   placeChoices: z.record(z.enum(placeIds), z.enum(["must", "interested", "skip"])).refine(v => Object.values(v).filter(x => x === "must").length <= 3, "Choose at most three must-visits"),
   completed: z.boolean(),
+  styleAnswers: styleAnswersSchema.optional(),
+  topPick: z.enum(placeIds).optional(),
+  shareStyle: z.boolean().default(false),
+}).superRefine((profile, ctx) => {
+  if (profile.topPick && profile.placeChoices[profile.topPick] !== "must") ctx.addIssue({code:"custom",path:["topPick"],message:"Your first choice must be one of your must-visits"});
+  if (profile.completed && profile.styleAnswers && !profile.topPick) ctx.addIssue({code:"custom",path:["topPick"],message:"Choose your first-priority attraction"});
+  if (profile.shareStyle && !profile.styleAnswers) ctx.addIssue({code:"custom",path:["shareStyle"],message:"Complete the style questions before sharing a result"});
 });
 export const nicknameSchema = z.string().trim().min(1).max(40);
 export const codeSchema = z.string().trim().toUpperCase().regex(/^TS-[A-F0-9]{24}$/);
 export const decisionSchema = z.enum(["alternative", "optional", "exception"]);
 export type Profile = z.infer<typeof profileSchema>;
-export type GroupMember = { id: string; name: string; role: "organizer" | "member"; completed: boolean };
+export type GroupMember = { id: string; name: string; role: "organizer" | "member"; completed: boolean; sharedStyle?: StyleResult };
 export type GroupSnapshot = {
   group: { code: string; name: string; createdAt: string; revision: number };
   members: GroupMember[]; currentMemberId: string;

@@ -18,6 +18,14 @@ Questionnaire edits are not autosaved. Submit the profile to save it; unsent edi
 
 The organizer can permanently delete the group and profiles after confirmation. Leaving a browser session does not delete records. The application retains group data until deletion. This coursework prototype does not guarantee step counts, transport feasibility, live pricing or availability.
 
+## Travel style (newer version only)
+
+The new flow has six playful style questions, all five original practical questions (pace, walking, budget, food and group style), and an attraction page. Personality scoring does not use the practical answers. Each style has four opportunities to score. Ties remain blends, including a broadly balanced result; there are no scientific or compatibility percentages.
+
+The additive `0001` migration adds nullable style answers, a nullable first-priority attraction and an opt-in style-sharing flag. Existing members and saved answers are preserved, and earlier submissions still work. No style is invented for old profiles. New quiz submissions require one first-priority attraction among up to three must-visits. Sharing off means only the organizer sees the result with the submitted profile. Sharing on exposes the derived label to group members, never raw answers or budget/mobility data. Revoking the flag removes it from subsequent snapshots.
+
+The server derives the style and supplies it as a soft cue with the first-priority attraction to DeepSeek, without names or raw personality answers. Explicit planning choices always take precedence. This module does not add verified travel facts, booking, route optimization or a guarantee that every priority fits. Old `main` and `feature/my-feature` branches and prior saved Site versions are not changed by implementing it on `codex/travel-personalities`.
+
 ## Development and tests
 
 ```sh

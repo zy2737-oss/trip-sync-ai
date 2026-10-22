@@ -12,6 +12,8 @@ export const tripMembers = sqliteTable("trip_members", {
   name: text("name").notNull(), nameKey: text("name_key").notNull(),
   tokenHash: text("token_hash").notNull(), role: text("role").notNull(),
   answers: text("answers"), placeChoices: text("place_choices"),
+  styleAnswers: text("style_answers"), topPick: text("top_pick"),
+  shareStyle: integer("share_style").notNull().default(0),
   completed: integer("completed").notNull().default(0), updatedAt: text("updated_at").notNull(),
 }, (t) => [uniqueIndex("member_group_name").on(t.groupCode, t.nameKey), uniqueIndex("member_token").on(t.tokenHash)]);
 export const groupRateLimits = sqliteTable("group_rate_limits", {
