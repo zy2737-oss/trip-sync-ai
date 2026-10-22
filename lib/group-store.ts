@@ -53,7 +53,7 @@ export async function snapshot(db:D1Database,code:string,request:Request):Promis
 }
 export async function createGroup(db:D1Database,request:Request) {
   checkOrigin(request); const input=z.object({name:z.string().trim().min(1).max(80),nickname:nicknameSchema}).parse(await readBody(request));
-  await quota(db,"create",request.headers.get("cf-connecting-ip")??"local",10,3600);
+  await quota(db,"create",request.headers.get("cf-connecting-ip")??"local",50,3600);
   const code=`TS-${secret().slice(0,24).toUpperCase()}`, token=secret(), id=crypto.randomUUID(), stamp=now();
   await db.batch([
     db.prepare("INSERT INTO trip_groups (code,name,created_at) VALUES (?,?,?)").bind(code,input.name,stamp),
