@@ -25,6 +25,8 @@ export function checkOrigin(request: Request) {
   if (origin && origin !== new URL(request.url).origin) throw new GroupError(403,"Cross-site writes are not allowed.");
 }
 export async function quota(db: D1Database, scope: string, identity: string, limit: number, seconds: number) {
+  // Temporary classroom-testing mode. Restore the scoped limits after the demo.
+  if (process.env.TRIPSYNC_DISABLE_RATE_LIMITS === "1") return;
   const stamp = Math.floor(Date.now()/1000); const window = Math.floor(stamp/seconds);
   const key = `${scope}:${await hashToken(identity)}:${window}`;
   const row = await db.prepare("INSERT INTO group_rate_limits (key,hits,expires_at) VALUES (?,1,?) ON CONFLICT(key) DO UPDATE SET hits = hits + 1 RETURNING hits").bind(key,(window+1)*seconds).first<{hits:number}>();
