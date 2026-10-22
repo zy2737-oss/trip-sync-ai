@@ -66,10 +66,10 @@ export function DailyItinerary({ conflictChoice, budget, walkingMode, generated,
   return <div className="space-y-4">
     <p className="text-xs text-muted-foreground">{generated?"AI draft":"Sample itinerary"} · Tokyo time · JPY (Japanese yen) · Estimates, not bookings</p>
     <details className="rounded-xl border border-[#dce4e7] bg-white px-4 py-2"><summary className="min-h-11 cursor-pointer py-3 text-sm font-medium">{generated?`Plan summary & review notes (${generated.reviewNotes.length})`:"About this sample"}</summary>
-      {generated&&<><p className="mt-2 text-sm leading-6 text-muted-foreground">{generated.summary}</p><ul className="mt-3 list-disc space-y-2 pl-5 text-sm leading-6 text-muted-foreground">{generated.reviewNotes.map((note,i)=><li key={i}>{note}</li>)}</ul></>}
+      {generated&&<><p className="mt-2 text-sm leading-6 text-muted-foreground">{generated.summary}</p><ul className="mt-3 list-disc space-y-2 pl-5 text-sm leading-6 text-muted-foreground">{generated.reviewNotes.map((note,i)=><li key={i}>{note.replace(/\s*\(custom-[a-f0-9-]{36}\)/gi,"")}</li>)}</ul></>}
       <p className="my-3 text-xs leading-5 text-muted-foreground">{generated?`DeepSeek${generatedAt?` · ${evidenceTime(generatedAt)}`:" · Date unavailable"}`:"Team-authored example"}. Hours, tickets and full-day costs need checking. <a href="/data-use" className="underline">Data &amp; sources</a></p>
     </details>
-    {generated?.reviewNotes.filter(note=>/not scheduled|omitt|cannot fit|outside (?:the|our|daily)|conflicts? with/i.test(note)).slice(0,2).map((note,i)=><p key={i} className="rounded-xl bg-[#fff5ed] px-4 py-3 text-sm text-[#a44832]">{note}</p>)}
+    {generated?.reviewNotes.filter(note=>/not scheduled|omitt|cannot fit|outside (?:the|our|daily)|conflicts? with/i.test(note)).slice(0,2).map((note,i)=><p key={i} className="rounded-xl bg-[#fff5ed] px-4 py-3 text-sm text-[#a44832]">{note.replace(/\s*\(custom-[a-f0-9-]{36}\)/gi,"")}</p>)}
     {(generated?.days ?? days).map((day) => {const stops=adjustWalking(day.day,day.stops,walkingMode),route=buildDailyRoute(day.day,stops);return <Card key={day.day} className="overflow-hidden border-[#dce4e7] bg-white shadow-sm">
       <div className="grid sm:grid-cols-[88px_1fr]">
         <div className="flex items-center justify-between bg-[#17384d] p-5 text-white sm:flex-col sm:items-start sm:justify-start sm:gap-2"><span className="text-sm font-semibold tracking-[0.16em] text-white/70">DAY</span><span className="text-4xl font-semibold">{day.day}</span></div>
