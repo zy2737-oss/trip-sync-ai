@@ -9,7 +9,7 @@ export function evidenceTime(value:string){return new Date(value).toLocaleString
 function distance(value:number){return value>=1000?`${(value/1000).toFixed(1)} km`:`${Math.round(value)} m`;}
 export function RouteCheckPanel({day,stops,access}:{day:string;stops:RouteStopInput[];access?:EvidenceAccess}){
   const [mode,setMode]=useState<RouteCheckInput["mode"]>("walking");
-  const payload={day,mode,stops:stops.map(s=>({time:s.time,title:s.title,detail:s.detail,...(s.meal?{meal:s.meal}:{}),...(s.locationId?{locationId:s.locationId}:{})}))};
+  const payload={day,mode,stops:stops.map(s=>({time:s.time,title:s.title,detail:s.detail,...(s.meal?{meal:s.meal}:{}),...(s.locationId?{locationId:s.locationId}:{}),...(s.customActivityId?{customActivityId:s.customActivityId}:{})}))};
   const signature=JSON.stringify(payload);
   const [report,setReport]=useState<{key:string;data:RouteCheck & {message?:string;attemptedAt?:string}}>();
   const [loading,setLoading]=useState(false),[message,setMessage]=useState("");

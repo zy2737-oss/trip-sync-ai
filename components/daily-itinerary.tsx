@@ -74,7 +74,7 @@ export function DailyItinerary({ conflictChoice, budget, walkingMode, generated,
               <h3 className="mt-2 text-base font-semibold">{stop.title}</h3><p className="mt-1 text-sm leading-6 text-muted-foreground">{stop.detail}</p>
               <p className="mt-2 text-xs text-muted-foreground">Time slot: {generated?"AI planning estimate":"sample planning estimate"} · not verified venue hours.</p>
               {stop.cost && <p className="mt-2 text-sm font-medium text-[#17384d]">Illustrative meal estimate: {stop.cost} <span className="text-xs font-normal text-muted-foreground">· {generated?"AI suggestion":"team sample"}, not a menu quote</span></p>}
-              <StopFactSources title={stop.title} locationId={stop.locationId} meal={stop.meal} generated={!!generated} access={access} />
+              <StopFactSources title={stop.title} locationId={stop.locationId} meal={stop.meal} generated={!!generated} access={access} customActivityId={"customActivityId" in stop?stop.customActivityId as string:undefined} />
               {stop.meal && (day.day === "04" && stop.meal === "Dinner" ? <>
                 {conflictChoice !== "exception" && <RestaurantOptions key="casual" day={day.day} meal={stop.meal} budget="mid" area="Ginza" label="Casual sushi candidates" />}
                 {conflictChoice !== "alternative" && <RestaurantOptions key="premium" day={day.day} meal={stop.meal} budget="premium" area="Ginza" label="Premium sushi candidates" />}

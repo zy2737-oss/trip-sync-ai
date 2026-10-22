@@ -4,8 +4,8 @@ import { getAttractionDetail } from "@/lib/attraction-details";
 import { factSources, type AttractionFacts, type FactId } from "@/lib/attraction-facts";
 import { evidenceTime, type EvidenceAccess } from "@/components/route-check-panel";
 
-export function StopFactSources({title,locationId,meal,generated,access,showPlanningClaim=true}:{title:string;locationId?:string;meal?:string;generated:boolean;access?:EvidenceAccess;showPlanningClaim?:boolean}){
-  const detail=meal?undefined:getAttractionDetail({id:locationId==="shibuyaSky"?"shibuya":locationId??"",name:title});
+export function StopFactSources({title,locationId,meal,generated,access,showPlanningClaim=true,customActivityId}:{title:string;locationId?:string;meal?:string;generated:boolean;access?:EvidenceAccess;showPlanningClaim?:boolean;customActivityId?:string}){
+  const detail=meal||customActivityId?undefined:getAttractionDetail({id:locationId==="shibuyaSky"?"shibuya":locationId??"",name:title});
   const id=detail?.id as FactId|undefined;
   const [result,setResult]=useState<{id:string;data:AttractionFacts}>(),[loading,setLoading]=useState(false),[message,setMessage]=useState("");
   const version=useRef(0);
@@ -23,6 +23,7 @@ export function StopFactSources({title,locationId,meal,generated,access,showPlan
     <summary className="min-h-8 cursor-pointer text-sm font-medium text-[#315b7d]">Sources &amp; fact status</summary>
     <div className="mt-3 space-y-3 text-xs leading-5 text-muted-foreground">
       {showPlanningClaim&&<p><span className="font-semibold text-[#17384d]">Schedule / meal estimate:</span> {generated?"DeepSeek-generated planning suggestion":"Team-authored sample suggestion"}. Not a verified opening time, menu quote or reservation.</p>}
+      {customActivityId&&<p>Custom request from a traveler. Search matches identify a place only; timing and activity details remain unverified. This custom stop is not plotted or measured by the route checker. Review the original request in the group summary and check directions externally.</p>}
       {id&&Object.hasOwn(factSources,id)?<>
         <p><span className="font-semibold text-[#17384d]">Attraction reference:</span> {factSources[id].name}. {title.includes(factSources[id].name)?"":"This is the nearby attraction reference, not proof that an alternative café or activity has been checked."} <a href={factSources[id].url} target="_blank" rel="noopener noreferrer" className="underline">{factSources[id].provider}</a>.</p>
         <button type="button" disabled={loading||!access} onClick={lookup} className="min-h-11 rounded-full border border-[#c9d7db] px-4 text-sm font-medium text-[#17384d] disabled:opacity-50">{loading?"Reading official source…":data?"Check official source again":"Check official hours & admission"}</button>

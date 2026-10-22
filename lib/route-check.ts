@@ -1,10 +1,11 @@
 import { z } from "zod";
 import { buildDailyRoute, routeLocations, type RouteStopInput, type LocationId } from "./daily-route.ts";
+import { customActivityId } from "./custom-activities.ts";
 
 const ids=Object.keys(routeLocations) as [LocationId,...LocationId[]];
 export const routeCheckSchema=z.object({
   day:z.enum(["01","02","03","04","05"]),mode:z.enum(["walking","driving"]),
-  stops:z.array(z.object({time:z.string().regex(/^([01]\d|2[0-3]):[0-5]\d[–-]([01]\d|2[0-3]):[0-5]\d$/),title:z.string().min(1).max(160),detail:z.string().max(700).default(""),meal:z.enum(["Lunch","Dinner"]).optional(),locationId:z.enum(ids).optional()})).min(2).max(8),
+  stops:z.array(z.object({time:z.string().regex(/^([01]\d|2[0-3]):[0-5]\d[–-]([01]\d|2[0-3]):[0-5]\d$/),title:z.string().min(1).max(160),detail:z.string().max(700).default(""),meal:z.enum(["Lunch","Dinner"]).optional(),locationId:z.enum(ids).optional(),customActivityId:customActivityId.optional()})).min(2).max(8),
 });
 export type RouteCheckInput=z.infer<typeof routeCheckSchema>;
 export type RoutingMatrix={ids:LocationId[];distances:(number|null)[][];durations:(number|null)[][];snapDistances:(number|null)[];queriedAt:string;dataVersion?:string};

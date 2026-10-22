@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
 import { readFileSync } from "node:fs";
 import { createGroup, joinGroup, snapshot, saveProfile, generateGroupPlan, acceptPlan, deleteGroup, hashToken, GroupError } from "../lib/group-store.ts";
+import { searchGroupActivities } from "../lib/activity-search.ts";
 
 // SQLite-backed D1 adapter: executes the real migration, SQL, authorization and generation flow.
 function database() {
@@ -86,6 +87,37 @@ test("deleting a group removes its profiles and saved plan",async()=>{
 });
 
 const foodStyle={bestDay:"food",freeTime:"slow",memory:"food",rain:"slow",research:"food",disappointment:"food"};
+test("custom activity search, confirmation, persistence and generation preserve attribution and privacy",async()=>{
+  const {db,sql,owner,friend}=await setup();let calls=0;
+  const searchProvider=async()=>{calls++;return Response.json({features:[{properties:{name:"Tokyo Tower",osm_type:"R",osm_id:4247312,countrycode:"JP",city:"Tokyo",country:"Japan"},geometry:{type:"Point",coordinates:[139.745536,35.6584491]}}]});};
+  await assert.rejects(searchGroupActivities(db,owner.code,req({query:"Tokyo Tower"}),searchProvider),rejected(401));
+  const result=await searchGroupActivities(db,owner.code,req({query:"Tokyo Tower"},owner.token),searchProvider);
+  const cached=await searchGroupActivities(db,owner.code,req({query:"Tokyo Tower"},friend.token),searchProvider);
+  assert.equal(calls,1);assert.equal(cached.cached,true);assert.equal(result.queriedAt,cached.queriedAt);
+  assert.ok(sql.prepare("SELECT payload FROM evidence_cache WHERE key LIKE 'activity-search:%'").get().payload.includes("Tokyo Tower"));
+  const match=result.candidates[0],id="custom-12345678-1234-1234-1234-123456789012";
+  const custom={id,name:match.name,location:match.address,priority:"must",timing:"Day 3 afternoon",description:"See the tower, about 90 minutes",match};
+  const chosen={...profile({},{}),customActivities:[custom],topPick:id,styleAnswers:foodStyle};
+  await assert.rejects(saveProfile(db,owner.code,req({...chosen,customActivities:[{...custom,match:{...match,lat:35.6}}]},owner.token,"PUT")),rejected(400));
+  await saveProfile(db,owner.code,req(chosen,owner.token,"PUT"));
+  const peer=await snapshot(db,owner.code,req(undefined,friend.token,"GET"));assert.equal(JSON.stringify(peer).includes("Tokyo Tower"),false);
+  // Once saved, an unchanged match can survive cache expiration. A new or forged match cannot.
+  sql.prepare("DELETE FROM evidence_cache").run();
+  const restored=await saveProfile(db,owner.code,req(chosen,owner.token,"PUT"));
+  assert.equal(restored.responses[restored.currentMemberId].topPick,id);assert.deepEqual(restored.responses[restored.currentMemberId].customActivities,[custom]);
+  const manual={id:"custom-22345678-1234-1234-1234-123456789012",name:"Pottery workshop",priority:"interested",timing:"Flexible, 2 hours",location:"Asakusa; venue unknown",description:"Seated beginner class"};
+  let snap=await saveProfile(db,owner.code,req({...profile(),customActivities:[manual]},friend.token,"PUT"));
+  const generated=await generateGroupPlan(db,owner.code,req({conflictChoice:"alternative",expectedRevision:snap.group.revision},owner.token),"key",undefined,async(url,init)=>{
+    const body=JSON.parse(init.body),input=JSON.parse(body.messages[1].content);
+    const traveler=input.travelers.find(t=>t.customActivities.some(a=>a.id===id));
+    assert.equal(traveler.topPick,"Tokyo Tower");assert.deepEqual(traveler.mustVisits,["Tokyo Tower"]);assert.deepEqual(traveler.customActivities,[custom]);
+    assert.ok(input.travelers.some(t=>t.customActivities.some(a=>a.name==="Pottery workshop"&&!a.match)));
+    assert.equal(JSON.stringify(input).includes("Organizer"),false);assert.ok(body.messages[0].content.includes("UNTRUSTED preference text"));
+    return provider();
+  });
+  assert.ok(generated.itinerary.reviewNotes.some(n=>n.includes("Custom must-visit not scheduled: Tokyo Tower")));
+  await deleteGroup(db,owner.code,req(undefined,owner.token,"DELETE"));assert.equal(sql.prepare("SELECT COUNT(*) AS n FROM trip_members").get().n,0);sql.close();
+});
 test("travel style and top pick persist; sharing a label never shares raw answers with peers",async()=>{
   const {db,sql,owner,friend}=await setup();
   await saveProfile(db,owner.code,req({...profile({}, {sensoji:"must"}),styleAnswers:foodStyle,topPick:"sensoji",shareStyle:false},owner.token,"PUT"));

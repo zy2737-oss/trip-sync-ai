@@ -4,6 +4,8 @@ const base=new URL(process.argv[2]??"http://127.0.0.1:8787").origin;
 const generate=process.argv.includes("--generate");
 const withStyles=process.argv.includes("--styles");
 const withEvidence=process.argv.includes("--evidence");
+const withCustom=process.argv.includes("--custom");
+let customId;
 let owner;
 async function call(path,method="GET",session,body,expected=200,retry=0){
   const response=await fetch(base+path,{method,signal:AbortSignal.timeout(85000),headers:{Origin:base,...(body?{"Content-Type":"application/json"}:{}),...(session?{Authorization:`Bearer ${session.token}`}:{})},...(body?{body:JSON.stringify(body)}:{})});
@@ -35,6 +37,18 @@ try{
     assert.equal(restored.responses[restored.currentMemberId].topPick,"sensoji");
     assert.deepEqual(restored.responses[restored.currentMemberId].styleAnswers,styleAnswers);
   }
+  if(withCustom){
+    await call(path+"/activities/search","POST",null,{query:"Tokyo Tower"},401);
+    const found=await call(path+"/activities/search","POST",owner,{query:"Tokyo Tower"});
+    const match=found.candidates.find(c=>c.name==="Tokyo Tower");assert.ok(match,"Expected a real Tokyo Tower search candidate");
+    const repeat=await call(path+"/activities/search","POST",friend,{query:"Tokyo Tower"});assert.equal(repeat.cached,true);assert.equal(repeat.queriedAt,found.queriedAt);
+    customId=`custom-${crypto.randomUUID()}`;
+    const customActivities=[{id:customId,name:match.name,priority:"must",timing:"Day 3, flexible for about 90 minutes",location:match.address,description:"See Tokyo Tower; prioritize a short visit and avoid long queues",match},{id:`custom-${crypto.randomUUID()}`,name:"Beginner pottery workshop",priority:"interested",timing:"Flexible afternoon, about 2 hours",location:"Asakusa, venue not decided",description:"A seated beginner class, optional if budget permits"}];
+    await call(path+"/profile","PUT",owner,{...profile,customActivities,topPick:customId});
+    const saved=await call(path,"GET",owner);assert.deepEqual(saved.responses[saved.currentMemberId].customActivities,customActivities);assert.equal(saved.responses[saved.currentMemberId].topPick,customId);
+    const peer=await call(path,"GET",friend);assert.equal(JSON.stringify(peer).includes("Beginner pottery workshop"),false);
+    console.log(JSON.stringify({customSearch:"passed (live Tokyo Tower match)",customProfile:"passed (matched and manual)",customPriority:"passed",customPrivacy:"passed"}));
+  }
   let summary=await call(path,"GET",owner);const mine=await call(path,"GET",friend);
   assert.equal(summary.members.length,2);assert.equal(Object.keys(summary.responses).length,2);assert.equal(Object.keys(mine.responses).length,1);
   if(withEvidence){
@@ -60,6 +74,7 @@ try{
     assert.equal(summary.itinerary.days.length,5);
     const restored=await call(path,"GET",friend);assert.equal(restored.itinerary.days.length,5);
     assert.ok(Date.parse(restored.generatedAt));
+    if(withCustom)assert.ok(restored.itinerary.days.some(d=>d.stops.some(s=>s.customActivityId===customId))||restored.itinerary.reviewNotes.some(n=>n.includes("Tokyo Tower")),"Custom must-visit must be scheduled or explicitly flagged");
     await call(path+"/accept","POST",owner,{expectedRevision:summary.group.revision});
     await call(path+"/profile","PUT",friend,profile);
     await call(path+"/accept","POST",owner,{expectedRevision:summary.group.revision},409);

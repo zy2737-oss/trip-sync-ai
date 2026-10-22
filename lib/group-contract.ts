@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { AIItinerary } from "./ai-itinerary";
 import { styleAnswersSchema, type StyleResult } from "./travel-personality.ts";
+import { customActivityId, customActivitySchema } from "./custom-activities.ts";
 
 export const answersSchema = z.object({
   pace: z.enum(["slow", "balanced", "packed"]), walking: z.enum(["light", "moderate", "active"]),
@@ -14,10 +15,16 @@ export const profileSchema = z.object({
   placeChoices: z.record(z.enum(placeIds), z.enum(["must", "interested", "skip"])).refine(v => Object.values(v).filter(x => x === "must").length <= 3, "Choose at most three must-visits"),
   completed: z.boolean(),
   styleAnswers: styleAnswersSchema.optional(),
-  topPick: z.enum(placeIds).optional(),
+  topPick: z.union([z.enum(placeIds),customActivityId]).optional(),
+  customActivities:z.array(customActivitySchema).max(3).default([]),
   shareStyle: z.boolean().default(false),
 }).superRefine((profile, ctx) => {
-  if (profile.topPick && profile.placeChoices[profile.topPick] !== "must") ctx.addIssue({code:"custom",path:["topPick"],message:"Your first choice must be one of your must-visits"});
+  const mustCount=Object.values(profile.placeChoices).filter(v=>v==="must").length+profile.customActivities.filter(a=>a.priority==="must").length;
+  if(mustCount>3)ctx.addIssue({code:"custom",path:["customActivities"],message:"Choose at most three must-visits across all listed and custom activities"});
+  if(new Set(profile.customActivities.map(a=>a.id)).size!==profile.customActivities.length)ctx.addIssue({code:"custom",path:["customActivities"],message:"Duplicate custom activity"});
+  const matchIds=profile.customActivities.flatMap(a=>a.match?[a.match.id]:[]);
+  if(new Set(matchIds).size!==matchIds.length)ctx.addIssue({code:"custom",path:["customActivities"],message:"That custom place was already added"});
+  if (profile.topPick && profile.placeChoices[profile.topPick as typeof placeIds[number]] !== "must" && !profile.customActivities.some(a=>a.id===profile.topPick&&a.priority==="must")) ctx.addIssue({code:"custom",path:["topPick"],message:"Your first choice must be one of your must-visits"});
   if (profile.completed && profile.styleAnswers && !profile.topPick) ctx.addIssue({code:"custom",path:["topPick"],message:"Choose your first-priority attraction"});
   if (profile.shareStyle && !profile.styleAnswers) ctx.addIssue({code:"custom",path:["shareStyle"],message:"Complete the style questions before sharing a result"});
 });
