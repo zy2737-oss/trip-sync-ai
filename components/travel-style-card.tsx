@@ -38,13 +38,13 @@ export function TravelStyleCard({ result, name }: { result: StyleResult | null; 
       <h1 className="mt-6 text-3xl font-semibold leading-[1.12] tracking-[-0.035em] sm:text-4xl">{result ? styleTitle(result) : "Your next travel chapter"}</h1>
       {result ? <>
         <p className="mt-4 text-lg leading-7 text-white/90">{result.balanced ? "A little of everything, in your own balance." : result.primary.map(id => travelStyles[id].tagline).join(" ")}</p>
-        <p className="mt-4 text-sm leading-6 text-white/70">{result.balanced ? "No single style stood out in your answers. That is a useful result too: your explicit preferences and this trip's priorities can lead the way." : result.primary.map(id => travelStyles[id].description).join(" ")}</p>
+        <p className="mt-4 text-sm leading-6 text-white/70">{result.balanced ? "Your answers blend several styles." : result.primary.map(id => travelStyles[id].description).join(" ")}</p>
         {result.secondary && <p className="mt-4 text-sm text-[#f5b6a9]">With a {travelStyles[result.secondary].shortName} streak.</p>}
-        {!result.balanced && <div className="mt-6 space-y-3 rounded-2xl bg-white/[0.07] p-4"><p className="text-xs font-semibold uppercase tracking-widest text-[#f5b6a9]">Planning cues, not promises</p>{result.primary.map(id => <p key={id} className="text-sm leading-6 text-white/80">{travelStyles[id].cue}</p>)}</div>}
+        {!result.balanced && <div className="mt-6 space-y-3 rounded-2xl bg-white/[0.07] p-4"><p className="text-xs font-semibold uppercase tracking-widest text-[#f5b6a9]">Your travel style</p>{result.primary.map(id => <p key={id} className="text-sm leading-6 text-white/80">{travelStyles[id].cue}</p>)}</div>}
         <button type="button" onClick={saveCard} className="mt-6 inline-flex items-center gap-2 rounded-full border border-white/25 px-4 py-2 text-sm font-medium hover:bg-white/10"><Download className="h-4 w-4" />Save style card</button>
         {saved && <p role="status" className="mt-2 text-xs text-white/70">{saved}</p>}
-      </> : <p className="mt-4 text-sm leading-7 text-white/75">Your earlier planning answers are still saved. Take the six travel-style questions to discover your result; we will not invent a personality from your budget or walking limit.</p>}
-      <p className="mt-6 text-xs leading-5 text-white/55">A playful reflection of six answers, not a psychological assessment or a permanent label. Your budget, walking limits and explicit planning choices always come first.</p>
+      </> : <p className="mt-4 text-sm leading-7 text-white/75">Answer six quick questions to discover your style.</p>}
+      <p className="mt-6 text-xs leading-5 text-white/55">Just for fun. Your planning preferences come first.</p>
     </div>
   </section>;
 }
@@ -55,8 +55,8 @@ export function GroupTravelStyles({ entries, privateView = false }: { entries: {
   return <section aria-label="Group travel styles" className="rounded-3xl border border-[#dce4e7] bg-white p-5 sm:p-6">
     <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[#d9513f]">Different styles, one trip</p>
     <h2 className="mt-2 text-2xl font-semibold tracking-tight">Meet your travel mix</h2>
-    <p className="mt-2 text-sm leading-6 text-muted-foreground">{privateView ? "Styles from submitted profiles help start a conversation. They never override the planning answers below." : "Only styles people chose to share are shown. Their questionnaire answers stay private to them and the organizer."}</p>
+    <p className="mt-2 text-sm leading-6 text-muted-foreground">{privateView ? "Your group’s travel styles." : "Shared by your group."}</p>
     <div className="mt-5 flex flex-wrap gap-3">{entries.map(e => <div key={e.id} className="max-w-full rounded-2xl bg-[#f4f7f7] px-4 py-3"><p className="text-xs font-medium text-muted-foreground">{e.name}</p><p className="mt-1 text-sm font-semibold">{styleTitle(e.result)}</p></div>)}</div>
-    {notes.length > 0 && <div className="mt-5 space-y-3 border-t border-[#e2e9eb] pt-4"><p className="text-sm font-semibold">Ideas to discuss before planning</p>{notes.map(note => <p key={note} className="text-sm leading-6 text-muted-foreground">{note}</p>)}</div>}
+    {notes.length > 0 && <details className="mt-3 border-t border-[#e2e9eb] pt-3"><summary className="min-h-11 cursor-pointer py-3 text-sm font-medium">Planning tips</summary>{notes.map(note => <p key={note} className="text-sm leading-6 text-muted-foreground">{note}</p>)}</details>}
   </section>;
 }

@@ -19,18 +19,18 @@ export function StopFactSources({title,locationId,meal,generated,access,showPlan
     finally{if(local===version.current)setLoading(false);}
   }
   const data=result&&result.id===id?result.data:undefined;
-  return <details className="mt-3 rounded-xl border border-[#dce4e7] bg-white/80 p-3">
-    <summary className="min-h-8 cursor-pointer text-sm font-medium text-[#315b7d]">Sources &amp; fact status</summary>
+  return <details className="mt-2">
+    <summary className="min-h-11 cursor-pointer py-3 text-xs font-medium text-[#315b7d]">Details &amp; sources</summary>
     <div className="mt-3 space-y-3 text-xs leading-5 text-muted-foreground">
-      {showPlanningClaim&&<p><span className="font-semibold text-[#17384d]">Schedule / meal estimate:</span> {generated?"DeepSeek-generated planning suggestion":"Team-authored sample suggestion"}. Not a verified opening time, menu quote or reservation.</p>}
-      {customActivityId&&<p>Custom request from a traveler. Search matches identify a place only; timing and activity details remain unverified. This custom stop is not plotted or measured by the route checker. Review the original request in the group summary and check directions externally.</p>}
+      {showPlanningClaim&&<p>{generated?"AI planning estimate":"Sample estimate"} · Not a reservation.</p>}
+      {customActivityId&&<p>Custom activity · Details unverified · Not mapped.</p>}
       {id&&Object.hasOwn(factSources,id)?<>
-        <p><span className="font-semibold text-[#17384d]">Attraction reference:</span> {factSources[id].name}. {title.includes(factSources[id].name)?"":"This is the nearby attraction reference, not proof that an alternative café or activity has been checked."} <a href={factSources[id].url} target="_blank" rel="noopener noreferrer" className="underline">{factSources[id].provider}</a>.</p>
+        <p><a href={factSources[id].url} target="_blank" rel="noopener noreferrer" className="underline">{factSources[id].provider}</a>{title.includes(factSources[id].name)?"":" · Nearby attraction reference"}</p>
         <button type="button" disabled={loading||!access} onClick={lookup} className="min-h-11 rounded-full border border-[#c9d7db] px-4 text-sm font-medium text-[#17384d] disabled:opacity-50">{loading?"Reading official source…":data?"Check official source again":"Check official hours & admission"}</button>
         {message&&<p role="alert" className="text-[#a44832]">{message}</p>}
-        <div className="space-y-2"><p><strong>Opening hours:</strong> {data?.hours??"Unverified — not retrieved from the official page."}</p><p><strong>Admission:</strong> {data?.admission??"Unverified — no current ticket quote retrieved."}</p>{data?.closure&&<p><strong>Closure rules:</strong> {data.closure}</p>}</div>
-        {data?<><p className="font-medium text-[#315b7d]">{data.status==="unavailable"?"Source unavailable · last attempt":data.cached?"Cached source check":"Source retrieved"}: {evidenceTime(data.queriedAt)}. {data.status==="partial"?"Some fields could not be extracted.":""}</p><p>{data.note}</p></>:<p>No source-query date yet. A link alone does not mean its contents were verified.</p>}
-      </>:<p><strong>Venue facts:</strong> No confirmed venue-specific hours or price source for this stop. Restaurant candidates show their own provider and original query timestamp. Directory results do not verify menu prices, opening or availability.</p>}
+        <div className="space-y-2"><p><strong>Hours:</strong> {data?.hours??(data?"Unavailable":"Not checked")}</p><p><strong>Admission:</strong> {data?.admission??(data?"Unavailable":"Not checked")}</p>{data?.closure&&<p><strong>Closures:</strong> {data.closure}</p>}</div>
+        {data&&<p className="font-medium text-[#315b7d]">{data.status==="unavailable"?"Query failed":data.cached?"Cached query":"Queried"}: {evidenceTime(data.queriedAt)}</p>}
+      </>:<p>Venue hours and prices unverified.</p>}
     </div>
   </details>;
 }

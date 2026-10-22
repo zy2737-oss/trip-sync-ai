@@ -1,6 +1,6 @@
 "use client";
 import { useState } from "react";
-import { Heart, MapPin, Utensils } from "lucide-react";
+import { MapPin, Utensils } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { RestaurantOptions } from "@/components/restaurant-options";
@@ -64,9 +64,12 @@ export function DailyItinerary({ conflictChoice, budget, walkingMode, generated,
   ];
 
   return <div className="space-y-4">
-    <p className="text-sm leading-6 text-muted-foreground">{generated ? "AI-generated draft" : "Sample schedule"} · Times are local to Tokyo. All meal estimates are in JPY (Japanese yen), not CNY / RMB. These are illustrative estimates, not live quotes. Choosing a restaurant does not make a reservation.</p>
-    <div className="rounded-2xl border border-[#c9d7db] bg-[#edf4f7] p-4 text-sm leading-6"><p className="font-semibold">What is sourced, and what is still a suggestion?</p><p className="mt-2 text-muted-foreground">{generated ? `Plan source: DeepSeek. ${generatedAt ? `Generated ${evidenceTime(generatedAt)}.` : "Generation time was not recorded for this older draft."}` : "Plan source: team-authored sample. It is not a live travel-data query."} Times and meal budgets remain planning estimates. Official-source fields and route estimates are fetched only when you press their check buttons; each result shows its original query date.</p><p className="mt-2 text-xs text-muted-foreground">No travel dates or confirmed restaurant addresses are recorded. Opening on your exact day, ticket availability, full-day costs and daily walking-limit compliance are not verified.</p></div>
-    {generated && <Card className="border-[#dce4e7] bg-white p-5"><p className="font-semibold">How this plan fits</p><p className="mt-2 text-sm leading-6 text-muted-foreground">{generated.summary}</p><h2 className="mt-4 font-semibold">Review before confirming</h2><ul className="mt-2 list-disc space-y-2 pl-5 text-sm leading-6 text-muted-foreground">{generated.reviewNotes.map((note, i) => <li key={i}>{note}</li>)}</ul></Card>}
+    <p className="text-xs text-muted-foreground">{generated?"AI draft":"Sample itinerary"} · Tokyo time · JPY (Japanese yen) · Estimates, not bookings</p>
+    <details className="rounded-xl border border-[#dce4e7] bg-white px-4 py-2"><summary className="min-h-11 cursor-pointer py-3 text-sm font-medium">{generated?`Plan summary & review notes (${generated.reviewNotes.length})`:"About this sample"}</summary>
+      {generated&&<><p className="mt-2 text-sm leading-6 text-muted-foreground">{generated.summary}</p><ul className="mt-3 list-disc space-y-2 pl-5 text-sm leading-6 text-muted-foreground">{generated.reviewNotes.map((note,i)=><li key={i}>{note}</li>)}</ul></>}
+      <p className="my-3 text-xs leading-5 text-muted-foreground">{generated?`DeepSeek${generatedAt?` · ${evidenceTime(generatedAt)}`:" · Date unavailable"}`:"Team-authored example"}. Hours, tickets and full-day costs need checking. <a href="/data-use" className="underline">Data &amp; sources</a></p>
+    </details>
+    {generated?.reviewNotes.filter(note=>/not scheduled|omitt|cannot fit|outside (?:the|our|daily)|conflicts? with/i.test(note)).slice(0,2).map((note,i)=><p key={i} className="rounded-xl bg-[#fff5ed] px-4 py-3 text-sm text-[#a44832]">{note}</p>)}
     {(generated?.days ?? days).map((day) => {const stops=adjustWalking(day.day,day.stops,walkingMode),route=buildDailyRoute(day.day,stops);return <Card key={day.day} className="overflow-hidden border-[#dce4e7] bg-white shadow-sm">
       <div className="grid sm:grid-cols-[88px_1fr]">
         <div className="flex items-center justify-between bg-[#17384d] p-5 text-white sm:flex-col sm:items-start sm:justify-start sm:gap-2"><span className="text-sm font-semibold tracking-[0.16em] text-white/70">DAY</span><span className="text-4xl font-semibold">{day.day}</span></div>
@@ -77,16 +80,14 @@ export function DailyItinerary({ conflictChoice, budget, walkingMode, generated,
             {stops.map((stop,index) => {const point=route[index],previous=route[index-1],walking=previous&&directionsUrl(previous,point,"walking"),transit=previous&&directionsUrl(previous,point,"transit");return <li id={`day-${day.day}-stop-${index+1}`} key={`${stop.time}-${stop.title}`} className={`scroll-mt-20 rounded-2xl border p-4 ${selected[day.day]?.number===index+1?"ring-2 ring-[#315b7d]":""} ${stop.meal ? "border-[#f2c6bb] bg-[#fff5f1]" : "border-transparent bg-[#f3f6f6]"}`}>
               <div className="flex flex-wrap items-center justify-between gap-2"><div className="flex items-center gap-3"><button type="button" disabled={!point.location} onClick={()=>select(day.day,index+1)} aria-label={`Show activity ${index+1} on Day ${day.day} map`} className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-[#17384d] font-semibold text-white disabled:opacity-50">{index+1}</button><span className="text-sm font-semibold tabular-nums text-[#315b7d]">{stop.time}</span></div>{stop.meal && <span className="flex items-center gap-1.5 text-sm font-semibold text-[#b74d38]"><Utensils className="h-4 w-4" />{stop.meal}</span>}</div>
               <h3 className="mt-2 text-base font-semibold">{stop.title}</h3><p className="mt-1 text-sm leading-6 text-muted-foreground">{stop.detail}</p>
-              <p className="mt-2 text-xs text-muted-foreground">Time slot: {generated?"AI planning estimate":"sample planning estimate"} · not verified venue hours.</p>
-              <p className="mt-2 text-xs text-muted-foreground">{point.location?`${point.location.name}${point.approximate?" · Approximate area":" · Reference pin"}`:"Location not confirmed — not plotted"}</p>
+              {(!point.location||point.approximate)&&<p className="mt-2 text-xs text-muted-foreground">{point.location?`≈ ${point.location.name}`:"Location unconfirmed · not mapped"}</p>}
               {walking&&transit&&<div className="mt-2 flex flex-wrap gap-3 text-xs text-[#315b7d]"><a href={walking} target="_blank" rel="noopener noreferrer" className="inline-flex min-h-11 items-center underline">{index} → {index+1}: walking directions</a><a href={transit} target="_blank" rel="noopener noreferrer" className="inline-flex min-h-11 items-center underline">Public transport directions</a></div>}
-              {stop.cost && <p className="mt-2 text-sm font-medium text-[#17384d]">Meal estimate (Japanese yen): {stop.cost.replace(/¥/g,"JPY ")} <span className="text-xs font-normal text-muted-foreground">· {generated?"AI suggestion":"team sample"}, not a menu quote</span></p>}
+              {stop.cost && <p className="mt-2 text-sm font-medium text-[#17384d]">Est. {stop.cost.replace(/¥/g,"JPY ")}</p>}
               <StopFactSources title={stop.title} locationId={stop.locationId} meal={stop.meal} generated={!!generated} access={access} customActivityId={"customActivityId" in stop?stop.customActivityId as string:undefined} />
               {stop.meal&&<RestaurantOptions day={day.day} meal={stop.meal} budget={day.day==="04"&&stop.meal==="Dinner"?(conflictChoice==="exception"?"premium":conflictChoice==="optional"?"flex":"mid"):budget} area={stop.title} access={access}/>}
             </li>;})}
           </ol>
           <details className="mt-5 rounded-xl border border-[#c9d7db] p-3"><summary className="min-h-11 cursor-pointer py-2 text-sm font-semibold">Check travel distances &amp; schedule gaps</summary><RouteCheckPanel day={day.day} stops={stops} access={access}/></details>
-          <p className="mt-4 flex items-center gap-2 text-sm text-[#315b7d]"><Heart className="h-4 w-4 shrink-0" />Priority interests: {day.people}</p>
         </div>
       </div>
     </Card>;})}
