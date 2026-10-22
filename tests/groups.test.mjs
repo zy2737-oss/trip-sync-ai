@@ -4,6 +4,7 @@ import { DatabaseSync } from "node:sqlite";
 import { readFileSync } from "node:fs";
 import { createGroup, joinGroup, snapshot, saveProfile, generateGroupPlan, acceptPlan, deleteGroup, hashToken, GroupError } from "../lib/group-store.ts";
 import { searchGroupActivities } from "../lib/activity-search.ts";
+import { groupRestaurants } from "../lib/group-restaurants.ts";
 
 // SQLite-backed D1 adapter: executes the real migration, SQL, authorization and generation flow.
 function database() {
@@ -87,6 +88,44 @@ test("deleting a group removes its profiles and saved plan",async()=>{
 });
 
 const foodStyle={bestDay:"food",freeTime:"slow",memory:"food",rain:"slow",research:"food",disappointment:"food"};
+test("restaurant directory requires membership and retains original dates across cache hits and budgets",async()=>{
+  const {db,sql,owner,friend}=await setup();let calls=0;
+  const get=(token,budget="value")=>new Request(`https://trip.test/api/restaurants?group=${owner.code}&day=01&meal=lunch&budget=${budget}`,{headers:{...(token?{Authorization:`Bearer ${token}`}:{})}});
+  const fetcher=async()=>{calls++;return Response.json({features:[{properties:{osm_type:"N",osm_id:123,name:"Public restaurant",osm_key:"amenity",osm_value:"restaurant",countrycode:"JP"},geometry:{type:"Point",coordinates:[139.796,35.711]}}]});};
+  await assert.rejects(groupRestaurants(db,get(),undefined,fetcher),rejected(401));
+  const first=await groupRestaurants(db,get(owner.token),undefined,fetcher);
+  const cached=await groupRestaurants(db,get(friend.token,"premium"),undefined,fetcher);
+  assert.equal(calls,1);assert.equal(cached.cached,true);assert.equal(first.checkedAt,cached.checkedAt);assert.equal(cached.restaurants[0].priceLevel,undefined);sql.close();
+});
+test("free-text revisions use the saved draft and profiles, re-open acceptance, and reject stale or unauthorized edits",async()=>{
+  const {db,sql,owner,friend}=await setup();
+  await saveProfile(db,owner.code,req(profile({budget:"value",walking:"light"}),owner.token,"PUT"));
+  let snap=await saveProfile(db,owner.code,req(profile(),friend.token,"PUT"));
+  const noPlan={request:"More café breaks",conflictChoice:"alternative",expectedRevision:snap.group.revision,expectedGeneratedAt:null};
+  await assert.rejects(generateGroupPlan(db,owner.code,req(noPlan,owner.token),"key",undefined,provider,true),rejected(409));
+  snap=await generateGroupPlan(db,owner.code,req({conflictChoice:"alternative",expectedRevision:snap.group.revision},owner.token),"key",undefined,provider);
+  const oldDate=snap.generatedAt,input={...noPlan,expectedGeneratedAt:oldDate};
+  await assert.rejects(generateGroupPlan(db,owner.code,req(input,friend.token),"key",undefined,provider,true),rejected(403));
+  await assert.rejects(generateGroupPlan(db,owner.code,req({...input,request:"x".repeat(801)},owner.token),"key",undefined,provider,true));
+  await acceptPlan(db,owner.code,req({expectedRevision:snap.group.revision,expectedGeneratedAt:oldDate},owner.token));
+  const revised=await generateGroupPlan(db,owner.code,req(input,owner.token),"key",undefined,async(url,init)=>{
+    const messages=JSON.parse(init.body).messages,data=JSON.parse(messages[1].content);
+    assert.equal(data.revision.request,"More café breaks");assert.deepEqual(data.revision.plan,snap.itinerary);assert.equal(data.answers.budget,"value");assert.equal(data.answers.walking,"light");assert.equal(JSON.stringify(data).includes("Organizer"),false);
+    await assert.rejects(acceptPlan(db,owner.code,req({expectedRevision:snap.group.revision,expectedGeneratedAt:oldDate},owner.token)),rejected(409));
+    const updated=plan();updated.summary="More café breaks added.";return Response.json({choices:[{finish_reason:"stop",message:{content:JSON.stringify(updated)}}]});
+  },true);
+  assert.equal(revised.itinerary.summary,"More café breaks added.");assert.equal(revised.acceptedAt,null);assert.notEqual(revised.generatedAt,oldDate);
+  await assert.rejects(generateGroupPlan(db,owner.code,req(input,owner.token),"key",undefined,provider,true),rejected(409));
+  await assert.rejects(acceptPlan(db,owner.code,req({expectedRevision:snap.group.revision,expectedGeneratedAt:oldDate},owner.token)),rejected(409));
+  sql.close();
+});
+test("failed revision preserves the previous saved draft and releases the generation lease",async()=>{
+  const {db,sql,owner,friend}=await setup();await saveProfile(db,owner.code,req(profile(),owner.token,"PUT"));let snap=await saveProfile(db,owner.code,req(profile(),friend.token,"PUT"));
+  snap=await generateGroupPlan(db,owner.code,req({conflictChoice:"alternative",expectedRevision:snap.group.revision},owner.token),"key",undefined,provider);
+  const input={request:"A slower morning",expectedGeneratedAt:snap.generatedAt,expectedRevision:snap.group.revision,conflictChoice:"alternative"};
+  await assert.rejects(generateGroupPlan(db,owner.code,req(input,owner.token),"key",undefined,async()=>new Response("",{status:503}),true),rejected(502));
+  const after=await snapshot(db,owner.code,req(undefined,owner.token,"GET"));assert.deepEqual(after.itinerary,snap.itinerary);assert.equal(after.generatedAt,snap.generatedAt);assert.equal(sql.prepare("SELECT generating_until FROM trip_groups").get().generating_until,0);sql.close();
+});
 test("custom activity search, confirmation, persistence and generation preserve attribution and privacy",async()=>{
   const {db,sql,owner,friend}=await setup();let calls=0;
   const searchProvider=async()=>{calls++;return Response.json({features:[{properties:{name:"Tokyo Tower",osm_type:"R",osm_id:4247312,countrycode:"JP",city:"Tokyo",country:"Japan"},geometry:{type:"Point",coordinates:[139.745536,35.6584491]}}]});};

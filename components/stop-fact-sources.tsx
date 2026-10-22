@@ -30,7 +30,7 @@ export function StopFactSources({title,locationId,meal,generated,access,showPlan
         {message&&<p role="alert" className="text-[#a44832]">{message}</p>}
         <div className="space-y-2"><p><strong>Opening hours:</strong> {data?.hours??"Unverified — not retrieved from the official page."}</p><p><strong>Admission:</strong> {data?.admission??"Unverified — no current ticket quote retrieved."}</p>{data?.closure&&<p><strong>Closure rules:</strong> {data.closure}</p>}</div>
         {data?<><p className="font-medium text-[#315b7d]">{data.status==="unavailable"?"Source unavailable · last attempt":data.cached?"Cached source check":"Source retrieved"}: {evidenceTime(data.queriedAt)}. {data.status==="partial"?"Some fields could not be extracted.":""}</p><p>{data.note}</p></>:<p>No source-query date yet. A link alone does not mean its contents were verified.</p>}
-      </>:<p><strong>Venue facts:</strong> No confirmed venue-specific hours or price source for this stop. Restaurant candidates have their own Google Maps source and query timestamp when live lookup is available.</p>}
+      </>:<p><strong>Venue facts:</strong> No confirmed venue-specific hours or price source for this stop. Restaurant candidates show their own provider and original query timestamp. Directory results do not verify menu prices, opening or availability.</p>}
     </div>
   </details>;
 }

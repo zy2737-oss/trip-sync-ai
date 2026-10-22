@@ -91,11 +91,14 @@ export async function saveProfile(db:D1Database,code:string,request:Request) {
   ]);
   return snapshot(db,code,request);
 }
-export async function generateGroupPlan(db:D1Database,code:string,request:Request,apiKey?:string,model?:string,fetcher:typeof fetch=fetch) {
+export async function generateGroupPlan(db:D1Database,code:string,request:Request,apiKey?:string,model?:string,fetcher:typeof fetch=fetch,revising=false) {
   checkOrigin(request); const me=await authorize(db,code,request,true);
-  const input=z.object({conflictChoice:decisionSchema,expectedRevision:z.number().int().nonnegative()}).parse(await readBody(request));
+  const input=z.object({conflictChoice:decisionSchema,expectedRevision:z.number().int().nonnegative(),request:revising?z.string().trim().min(3).max(800):z.undefined().optional(),expectedGeneratedAt:revising?z.string().datetime().nullable():z.undefined().optional()}).parse(await readBody(request,4096));
   const group=await groupRow(db,code), members=await memberRows(db,code);
   if(group.revision!==input.expectedRevision) throw new GroupError(409,"Group answers changed. Refresh the summary before generating.");
+  if(revising&&(!group.itinerary||group.plan_revision!==group.revision))throw new GroupError(409,"Generate a current group plan before requesting changes.");
+  if(revising&&(group.generated_at??null)!==input.expectedGeneratedAt)throw new GroupError(409,"The draft changed on another device. Refresh before requesting changes.");
+  if(revising&&group.conflict_choice!==input.conflictChoice)throw new GroupError(409,"Review dinner decisions before changing the draft.");
   if(!members.length || members.some(m=>!m.completed)) throw new GroupError(409,"Wait until every traveler has submitted a profile.");
   if(!apiKey) throw new GroupError(503,"AI generation is not connected. Ask the organizer to check the API configuration.");
   const profiles=members.map(m=>profileOf(m)!); const answers=aggregateProfiles(profiles);
@@ -107,8 +110,10 @@ export async function generateGroupPlan(db:D1Database,code:string,request:Reques
   try {
     const travelers=members.map((m,i)=>{const profile=profiles[i],travelStyle=scoreTravelStyle(profile.styleAnswers);return {label:`Traveler ${i+1}`,answers:profile.answers,mustVisits:[...Object.entries(profile.placeChoices).filter(([,v])=>v==="must").map(([id])=>placeNames[id]),...profile.customActivities.filter(a=>a.priority==="must").map(a=>a.name)],customActivities:profile.customActivities,...(profile.topPick?{topPick:placeNames[profile.topPick]??profile.customActivities.find(a=>a.id===profile.topPick)?.name}:{}),...(travelStyle?{travelStyle}:{})};});
     const mustVisits=[...new Set(travelers.flatMap(t=>t.mustVisits))];
-    const plan=await generateAIItinerary({answers,mustVisits,conflictChoice:input.conflictChoice,travelers},apiKey,model,fetcher);
-    const saved=await db.prepare("UPDATE trip_groups SET itinerary = ?, plan_revision = ?, conflict_choice = ?, generated_at = ?, accepted_at = NULL WHERE code = ? AND revision = ? AND generating_until = ? RETURNING code").bind(JSON.stringify(plan),group.revision,input.conflictChoice,now(),code,group.revision,lease).first();
+    const plan=await generateAIItinerary({answers,mustVisits,conflictChoice:input.conflictChoice,travelers},apiKey,model,fetcher,revising?{request:input.request!,plan:JSON.parse(group.itinerary!)}:undefined);
+    const previousGenerated=Date.parse(group.generated_at??"");
+    const generatedStamp=new Date(Math.max(Date.now(),Number.isFinite(previousGenerated)?previousGenerated+1:0)).toISOString();
+    const saved=await db.prepare("UPDATE trip_groups SET itinerary = ?, plan_revision = ?, conflict_choice = ?, generated_at = ?, accepted_at = NULL WHERE code = ? AND revision = ? AND generating_until = ? RETURNING code").bind(JSON.stringify(plan),group.revision,input.conflictChoice,generatedStamp,code,group.revision,lease).first();
     if(!saved) throw new GroupError(409,"A traveler updated their profile during generation. Refresh and generate from the latest answers.");
     return snapshot(db,code,request);
   } catch(error) {
@@ -119,8 +124,9 @@ export async function generateGroupPlan(db:D1Database,code:string,request:Reques
 }
 export async function acceptPlan(db:D1Database,code:string,request:Request) {
   checkOrigin(request); await authorize(db,code,request,true);
-  const input=z.object({expectedRevision:z.number().int().nonnegative()}).parse(await readBody(request));
-  const result=await db.prepare("UPDATE trip_groups SET accepted_at = ? WHERE code = ? AND revision = ? AND plan_revision = revision AND itinerary IS NOT NULL RETURNING code").bind(now(),code,input.expectedRevision).first();
+  const input=z.object({expectedRevision:z.number().int().nonnegative(),expectedGeneratedAt:z.string().datetime().nullable().optional()}).parse(await readBody(request));
+  const clause=input.expectedGeneratedAt===undefined?"":" AND generated_at IS ?";
+  const result=await db.prepare("UPDATE trip_groups SET accepted_at = ? WHERE code = ? AND revision = ? AND plan_revision = revision AND itinerary IS NOT NULL AND generating_until < ?"+clause+" RETURNING code").bind(now(),code,input.expectedRevision,Date.now(),...(input.expectedGeneratedAt===undefined?[]:[input.expectedGeneratedAt])).first();
   if(!result) throw new GroupError(409,"This draft is out of date. Refresh and generate a new draft before accepting.");
   return snapshot(db,code,request);
 }

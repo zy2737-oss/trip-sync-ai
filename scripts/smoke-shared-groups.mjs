@@ -5,6 +5,8 @@ const generate=process.argv.includes("--generate");
 const withStyles=process.argv.includes("--styles");
 const withEvidence=process.argv.includes("--evidence");
 const withCustom=process.argv.includes("--custom");
+const withRestaurants=process.argv.includes("--restaurants"),withRevision=process.argv.includes("--revise");
+if(withRevision&&!generate)throw new Error("--revise requires --generate (two live AI requests)");
 let customId;
 let owner;
 async function call(path,method="GET",session,body,expected=200,retry=0){
@@ -51,6 +53,17 @@ try{
   }
   let summary=await call(path,"GET",owner);const mine=await call(path,"GET",friend);
   assert.equal(summary.members.length,2);assert.equal(Object.keys(summary.responses).length,2);assert.equal(Object.keys(mine.responses).length,1);
+  if(withRestaurants){
+    const endpoint=`/api/restaurants?group=${owner.code}&day=01&meal=lunch&budget=mid`;
+    await call(endpoint,"GET",null,undefined,401);
+    const result=await call(endpoint,"GET",owner);assert.ok(result.restaurants.length>0);assert.ok(Date.parse(result.checkedAt));
+    assert.ok(["google_places","openstreetmap"].includes(result.source));
+    if(result.source==="openstreetmap"){
+      assert.ok(result.restaurants.every(r=>r.priceLevel===undefined&&r.hours.length===0));
+      const cached=await call(endpoint,"GET",friend);assert.equal(cached.cached,true);assert.equal(cached.checkedAt,result.checkedAt);
+    }
+    console.log(JSON.stringify({restaurants:"passed (real named candidates, source/date/auth)",provider:result.source}));
+  }
   if(withEvidence){
     const route={day:"01",mode:"walking",stops:[{time:"09:00–10:00",title:"Sensō-ji",detail:"Temple visit",locationId:"sensoji"},{time:"10:00–11:00",title:"Tokyo National Museum",detail:"Museum visit",locationId:"museum"}]};
     await call(path+"/routes","POST",null,route,401);
@@ -75,11 +88,21 @@ try{
     const restored=await call(path,"GET",friend);assert.equal(restored.itinerary.days.length,5);
     assert.ok(Date.parse(restored.generatedAt));
     if(withCustom)assert.ok(restored.itinerary.days.some(d=>d.stops.some(s=>s.customActivityId===customId))||restored.itinerary.reviewNotes.some(n=>n.includes("Tokyo Tower")),"Custom must-visit must be scheduled or explicitly flagged");
-    await call(path+"/accept","POST",owner,{expectedRevision:summary.group.revision});
+    if(withRevision){
+      const body={request:"Make Day 1 more relaxed, add a seated café break, and keep our meals, saved budget, must-visits and walking limits.",conflictChoice:summary.conflictChoice,expectedRevision:summary.group.revision,expectedGeneratedAt:summary.generatedAt};
+      await call(path+"/revise","POST",friend,body,403);
+      const previousDate=summary.generatedAt;summary=await call(path+"/revise","POST",owner,body);
+      assert.equal(summary.itinerary.days.length,5);assert.notEqual(summary.generatedAt,previousDate);assert.equal(summary.acceptedAt,null);
+      const peer=await call(path,"GET",friend);assert.deepEqual(peer.itinerary,summary.itinerary);
+      await call(path+"/revise","POST",owner,body,409);
+      await call(path+"/accept","POST",owner,{expectedRevision:summary.group.revision,expectedGeneratedAt:previousDate},409);
+      console.log(JSON.stringify({revision:"passed (live AI rewrite, shared persistence, authorization, stale-draft protection)"}));
+    }
+    await call(path+"/accept","POST",owner,{expectedRevision:summary.group.revision,expectedGeneratedAt:summary.generatedAt});
     await call(path+"/profile","PUT",friend,profile);
     await call(path+"/accept","POST",owner,{expectedRevision:summary.group.revision},409);
   }
-  console.log(JSON.stringify({storage:"passed",separateCredentials:"passed",memberPrivacy:"passed",styles:withStyles?"passed (persistence, opt-in and first priority)":"not requested",generation:generate?"passed (one live request)":"not requested"}));
+  console.log(JSON.stringify({storage:"passed",separateCredentials:"passed",memberPrivacy:"passed",styles:withStyles?"passed (persistence, opt-in and first priority)":"not requested",generation:generate?`passed (${withRevision?"two":"one"} live AI requests)`:"not requested"}));
 }finally{
   if(owner){await call(`/api/groups/${owner.code}`,"DELETE",owner);console.log("Removed only the automated QA group and its profiles.");}
 }

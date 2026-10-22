@@ -52,7 +52,7 @@ export function useTripGroup() {
       setSnapshot(snap);setSession(data);setInvite("");return snap;
     });
   }
-  async function update(action:"profile"|"itinerary"|"accept",body:unknown) {
+  async function update(action:"profile"|"itinerary"|"accept"|"revise",body:unknown) {
     if(!session)return;
     return run(async()=>{const data=await api(`/api/groups/${session.code}/${action}`,session,action==="profile"?"PUT":"POST",body) as GroupSnapshot;setSnapshot(data);return data;});
   }
